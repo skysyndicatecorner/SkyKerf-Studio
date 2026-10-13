@@ -1,0 +1,77 @@
+{
+  "name": "kerf-studio",
+  "productName": "Kerf Studio",
+  "version": "0.2.0",
+  "description": "Open-source CAD/CAM for laser cutters and CNC routers: design, toolpaths, G-code simulation, machine control, 3D model slicing and nesting.",
+  "main": "main.js",
+  "license": "MIT",
+  "author": {
+    "name": "Kerf Studio contributors",
+    "email": "kerf-studio@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/OWNER/kerf-studio",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.6.0",
+    "electron-builder": "^26.16.0"
+  },
+  "build": {
+    "appId": "org.kerfstudio.app",
+    "productName": "Kerf Studio",
+    "copyright": "Copyright © 2026 Kerf Studio contributors",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "licenses/**/*"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "kerf",
+        "name": "Kerf Studio Project",
+        "description": "Kerf Studio project",
+        "mimeType": "application/x-kerf-project",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kerf Studio",
+      "artifactName": "KerfStudio-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "KerfStudio-Portable-${version}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Graphics",
+      "icon": "build/icon.png",
+      "synopsis": "CAD/CAM for laser cutters and CNC routers",
+      "maintainer": "Kerf Studio contributors <kerf-studio@users.noreply.github.com>",
+      "artifactName": "KerfStudio-${version}-${arch}.${ext}"
+    }
+  }
+}

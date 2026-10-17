@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Kerf Studio contributors
+Copyright (c) 2026 SkyKerf_Studio contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,6 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The MIT License above applies to the original source code of Kerf Studio
-(main.js, preload.js, src/index.html, src/js/*). Bundled third-party
+The MIT License above applies to the original source code of SkyKerf_Studio
+(main.js, preload.js, src/index.html, src/app.css, src/js/*, tests/*). Bundled third-party
 components keep their own licenses — see THIRD_PARTY_NOTICES.md.

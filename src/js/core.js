@@ -1,299 +1,328 @@
 'use strict';
-/* ================= Kerf Studio · core: helpers, model, geometry ================= */
-const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v);return true}catch(e){return false}}};
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const fx=(n,d=2)=>{const v=+(+n).toFixed(d);return Object.is(v,-0)?0:v};
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let lang=store.get('kerf.lang')||(/^en/i.test(navigator.language||'')?'en':'ru');
-const T=(ru,en)=>lang==='ru'?ru:en;
-const MM=()=>T('мм','mm'), MMIN=()=>T('мм/мин','mm/min');
-function fmtTime(sec){sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`}
-function fmtLen(mm){return mm>=1000?fx(mm/1000,2)+' '+T('м','m'):fx(mm,0)+' '+MM()}
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-function hslRgb(h,s,l){const f=n=>{const k=(n+h*12)%12,a=s*Math.min(l,1-l);return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return[f(0),f(8),f(4)]}
-const hslHex=(h,s,l)=>'#'+hslRgb(((h%360)+360)%360/360,clamp(s,0,100)/100,clamp(l,0,100)/100).map(v=>v.toString(16).padStart(2,'0')).join('');
-let seedRnd=1;function rnd(){seedRnd=(seedRnd*16807)%2147483647;return(seedRnd-1)/2147483646}
+/* ============================================================================
+   SkyKerf_Studio · core
+   helpers, i18n, icons, machine profiles, project model (format v3),
+   named undo/redo history, serialization + migration, assets, dialogs
+   ============================================================================ */
+const APP_NAME = 'SkyKerf_Studio';
+const APP_VERSION = '0.3.0';
+const FORMAT_VERSION = 3;
 
-const ICON={
- select:'<path d="M5 3l11 7-5 1.2 3 5.3-2 1.1-3-5.3L5 16z"/>',
- rect:'<rect x="3.5" y="5.5" width="13" height="9" rx="1.2"/>',
- ellipse:'<ellipse cx="10" cy="10" rx="7" ry="5.5"/>',
- polygon:'<path d="M10 3l6.5 3.8v6.4L10 17l-6.5-3.8V6.8z"/>',
- star:'<path d="M10 2.8l2.1 4.6 5 .5-3.8 3.4 1.1 4.9L10 13.7l-4.4 2.5 1.1-4.9L2.9 7.9l5-.5z"/>',
- line:'<path d="M4.5 15.5l11-11"/><circle cx="4.5" cy="15.5" r="1.5"/><circle cx="15.5" cy="4.5" r="1.5"/>',
- pen:'<path d="M3.5 16.5l3-1 9-9-2-2-9 9z"/><path d="M11.5 6.5l2 2"/>',
- text:'<path d="M4 5h12M10 5v11M7.5 16h5"/>',
- hand:'<path d="M7 10.5V5.2a1.3 1.3 0 012.6 0V9.5M9.6 9V4a1.3 1.3 0 012.6 0v5M12.2 9.2V5.6a1.3 1.3 0 012.6 0v6.2a5.2 5.2 0 01-5.2 5.2H9.1a4 4 0 01-3.2-1.6l-2.4-3.3a1.3 1.3 0 012-1.6L7 12"/>',
- measure:'<path d="M2.5 13.5l11-11 4 4-11 11z"/><path d="M6 10l1.5 1.5M8.5 7.5L10 9M11 5l1.5 1.5"/>',
- fit:'<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><rect x="7" y="7" width="6" height="6" rx="1"/>',
- zin:'<circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4M9 6.5v5M6.5 9h5"/>',
- zout:'<circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4M6.5 9h5"/>',
- undo:'<path d="M7 5L3.5 8.5 7 12"/><path d="M4 8.5h8a4.5 4.5 0 010 9H9"/>',
- redo:'<path d="M13 5l3.5 3.5L13 12"/><path d="M16 8.5H8a4.5 4.5 0 000 9h3"/>',
- play:'<path d="M6 4l10 6-10 6z" fill="currentColor"/>',
- pause:'<path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor"/>',
- stop:'<rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor"/>',
- eye:'<path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.3"/>',
- eyeoff:'<path d="M3 3l14 14M8.3 5A7 7 0 0110 4.5c5 0 8 5.5 8 5.5a14 14 0 01-2.4 3M12 15.2a7 7 0 01-2 .3c-5 0-8-5.5-8-5.5a14 14 0 013-3.6"/>',
- up:'<path d="M5 12l5-5 5 5"/>', down:'<path d="M5 8l5 5 5-5"/>',
- copy:'<rect x="6.5" y="6.5" width="10" height="10" rx="1.5"/><path d="M13.5 6.5v-2a1 1 0 00-1-1h-8a1 1 0 00-1 1v8a1 1 0 001 1h2"/>',
- trash:'<path d="M4 6h12M8 6V4h4v2M5.5 6l.8 10.5h7.4L14.5 6"/>',
- svg:'<path d="M4 3.5h8l4 4v9H4z"/><path d="M12 3.5v4h4M10 9.5v5M7.5 12l2.5 2.5 2.5-2.5"/>',
- image:'<rect x="3" y="4" width="14" height="12" rx="1.5"/><circle cx="7.5" cy="8" r="1.5"/><path d="M3.5 14l4-4 3 3 2.5-2.5 3.5 3.5"/>',
- file:'<path d="M5 3h7l3 3v11H5z"/><path d="M12 3v3h3"/>',
- gear:'<path d="M10 2.5l1.3 2.2 2.5-.7.6 2.5 2.4 1-1 2.4 1.6 2-2 1.6.3 2.6-2.6.2-1.1 2.4-2-1.6-2 1.6-1.1-2.4-2.6-.2.3-2.6-2-1.6 1.6-2-1-2.4 2.4-1 .6-2.5 2.5.7z"/><circle cx="10" cy="10" r="2.6"/>',
- cog:'<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
- theme:'<circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 000 13z" fill="currentColor"/>',
- laser:'<path d="M7 3h6v5H7z"/><path d="M10 8v5" stroke-dasharray="1.6 1.4"/><path d="M6 17h8M8.5 14.5L10 13l1.5 1.5"/>',
- cnc:'<path d="M8 3h4v4H8zM9 7h2v4l-1 2-1-2z"/><path d="M4 16h12"/><path d="M6 14v2M14 14v2"/>',
- chev:'<path d="M6 8l4 4 4-4"/>',
- grid:'<path d="M3 7h14M3 13h14M7 3v14M13 3v14"/>',
- cube:'<path d="M10 2.5l7 4v7l-7 4-7-4v-7z"/><path d="M3 6.5l7 4 7-4M10 10.5v7"/>',
- slices:'<path d="M3 14.5l7 3 7-3M3 11.5l7 3 7-3M3 8.5l7 3 7-3M10 2.5l7 3-7 3-7-3z"/>',
- layers:'<rect x="2.5" y="3" width="11" height="9" rx="1"/><rect x="6.5" y="8" width="11" height="9" rx="1" fill="var(--panel)"/><path d="M9 14c1.5-2 3-2.5 6-1"/>',
- box:'<path d="M3 7l7-3.5L17 7v7l-7 3.5L3 14z"/><path d="M3 7l7 3.5L17 7M10 10.5v7"/><path d="M5.5 8.2v1.6M7.5 9.2v1.6M12.5 9.2v1.6M14.5 8.2v1.6"/>',
- puzzle:'<path d="M4 4h4.5a1.8 1.8 0 113 0H16v4.5a1.8 1.8 0 110 3V16h-4.5a1.8 1.8 0 10-3 0H4v-4.5a1.8 1.8 0 100-3z"/>',
- hinge:'<rect x="3" y="4" width="14" height="12" rx="1"/><path d="M6.5 4v5M6.5 11v5M10 4v2M10 8v4M10 14v2M13.5 4v5M13.5 11v5"/>',
- qr:'<path d="M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3z"/><path d="M12 12h2v2h-2zM15 15h2v2h-2zM15 12h2M12 16v1"/>',
- test:'<rect x="3" y="3" width="4" height="4" fill="currentColor" opacity=".3"/><rect x="8" y="3" width="4" height="4" fill="currentColor" opacity=".6"/><rect x="13" y="3" width="4" height="4" fill="currentColor"/><rect x="3" y="8" width="4" height="4" fill="currentColor" opacity=".5"/><rect x="8" y="8" width="4" height="4" fill="currentColor" opacity=".8"/><rect x="13" y="8" width="4" height="4"/><rect x="3" y="13" width="4" height="4" fill="currentColor" opacity=".7"/><rect x="8" y="13" width="4" height="4"/><rect x="13" y="13" width="4" height="4"/>',
- sign:'<rect x="2.5" y="5" width="15" height="10" rx="2"/><circle cx="5" cy="7.5" r=".8"/><circle cx="15" cy="7.5" r=".8"/><path d="M6.5 11.5h7"/>',
- nest:'<rect x="2.5" y="2.5" width="15" height="15" rx="1"/><path d="M2.5 9h7v8.5M9.5 5.5h8M13 5.5v12"/>',
- group:'<rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke-dasharray="2 2"/><rect x="5.5" y="5.5" width="5" height="5"/><circle cx="12.5" cy="12.5" r="2.5"/>',
- ungroup:'<rect x="3" y="3" width="6" height="6"/><circle cx="14" cy="14" r="3"/>',
- wand:'<path d="M3 17L13 7M11 5l4 4"/><path d="M15 2v3M13.5 3.5h3M17 9v2M16 10h2"/>',
- plus:'<path d="M10 4v12M4 10h12"/>',
- home:'<path d="M3.5 9.5L10 4l6.5 5.5M5.5 8v8h9V8"/>',
- frame:'<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/>',
- link:'<path d="M8.5 11.5l3-3M7 9l-2 2a2.8 2.8 0 004 4l2-2M13 11l2-2a2.8 2.8 0 00-4-4L9 7"/>',
- open:'<path d="M3 6.5V15h14V8H9.5L8 6.5z"/>',
- save:'<path d="M4 4h9.5L16 6.5V16H4z"/><path d="M7 4v4h6V4M7 16v-5h6v5"/>',
- newp:'<path d="M5 3h7l3 3v11H5z"/><path d="M10 8.5v5M7.5 11h5"/>',
- edit:'<path d="M4 16l1-4 8-8 3 3-8 8z"/>',
- circle:'<circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="3.5" r="1.3" fill="currentColor"/><circle cx="16.5" cy="10" r="1.3" fill="currentColor"/><circle cx="10" cy="16.5" r="1.3" fill="currentColor"/><circle cx="3.5" cy="10" r="1.3" fill="currentColor"/>',
- split:'<path d="M3 10h4M13 10h4M7 6l3 4-3 4M13 6l-3 4 3 4"/>',
- smooth:'<path d="M3 14c3-8 5 4 8-4s4-2 6-4"/>',
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+/* Storage: new keys use the "skykerf." prefix. Values written by the old
+   "Kerf Studio" builds ("kerf.*") are copied once and never deleted. */
+const store = {
+  get(k) { try { return localStorage.getItem('skykerf.' + k) } catch (e) { return null } },
+  set(k, v) { try { localStorage.setItem('skykerf.' + k, v); return true } catch (e) { return false } },
+  del(k) { try { localStorage.removeItem('skykerf.' + k) } catch (e) { } },
+  migrateLegacy() {
+    let moved = 0;
+    try {
+      for (const k of ['project', 'lang', 'mode', 'tab', 'theme']) {
+        const old = localStorage.getItem('kerf.' + k);
+        if (old != null && localStorage.getItem('skykerf.' + k) == null) { localStorage.setItem('skykerf.' + k, old); moved++ }
+      }
+    } catch (e) { }
+    return moved;
+  }
 };
-const ic=(k,s=18)=>`<svg viewBox="0 0 20 20" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${ICON[k]||''}</svg>`;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const fx = (n, d = 2) => { const v = +(+n).toFixed(d); return Object.is(v, -0) ? 0 : v };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+store.migrateLegacy();
+let lang = store.get('lang') || (/^en/i.test((typeof navigator !== 'undefined' && navigator.language) || '') ? 'en' : 'ru');
+const T = (ru, en) => lang === 'ru' ? ru : en;
+const L10 = o => o == null ? '' : typeof o === 'string' ? o : (lang === 'ru' ? (o.ru ?? o.en) : (o.en ?? o.ru)) ?? '';
+const MM = () => T('мм', 'mm'), MMIN = () => T('мм/мин', 'mm/min');
+function fmtTime(sec) { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}` }
+function fmtLen(mm) { return mm >= 1000 ? fx(mm / 1000, 2) + ' ' + T('м', 'm') : fx(mm, 0) + ' ' + MM() }
+function fmtArea(mm2) { return mm2 >= 1e6 ? fx(mm2 / 1e6, 3) + ' ' + T('м²', 'm²') : fx(mm2 / 100, 1) + ' ' + T('см²', 'cm²') }
+function hslRgb(h, s, l) { const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))) }; return [f(0), f(8), f(4)] }
+const hslHex = (h, s, l) => '#' + hslRgb(((h % 360) + 360) % 360 / 360, clamp(s, 0, 100) / 100, clamp(l, 0, 100) / 100).map(v => v.toString(16).padStart(2, '0')).join('');
+let seedRnd = 1; function rnd() { seedRnd = (seedRnd * 16807) % 2147483647; return (seedRnd - 1) / 2147483646 }
+function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0 } return h.toString(36) + s.length.toString(36) }
+const uid = p => (p || 'id') + '-' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+const deepCopy = o => JSON.parse(JSON.stringify(o));
 
-/* ================= model ================= */
-const COLORS=['#e5484d','#3e8ef7','#30a46c','#f5a524','#a46ef0','#12a5b8','#e5679f','#8b95a3','#d9653b','#5c6bc0','#9aa3af'];
-const NL=11, TOOL_L=10;
-const MACHINES=[
- {id:'diode',type:'laser',name:'Diode Laser 10W',w:400,h:400,smax:1000,rapid:6000,safeZ:5,rpm:0,fw:'grbl'},
- {id:'diode20',type:'laser',name:'Diode Laser 20W',w:400,h:400,smax:1000,rapid:9000,safeZ:5,rpm:0,fw:'grbl'},
- {id:'co2',type:'laser',name:'CO2 Laser 50W',w:500,h:300,smax:1000,rapid:12000,safeZ:5,rpm:0,fw:'grbl'},
- {id:'c3018',type:'cnc',name:'CNC 3018 Pro',w:300,h:180,smax:1000,rapid:1500,safeZ:5,rpm:10000,fw:'grbl'},
- {id:'c6060',type:'cnc',name:'CNC Router 6060',w:600,h:600,smax:24000,rapid:5000,safeZ:5,rpm:18000,fw:'grbl'},
+/* ============================== icons ============================== */
+const ICON = {
+  select: '<path d="M5 3l11 7-5 1.2 3 5.3-2 1.1-3-5.3L5 16z"/>',
+  rect: '<rect x="3.5" y="5.5" width="13" height="9" rx="1.2"/>',
+  ellipse: '<ellipse cx="10" cy="10" rx="7" ry="5.5"/>',
+  polygon: '<path d="M10 3l6.5 3.8v6.4L10 17l-6.5-3.8V6.8z"/>',
+  star: '<path d="M10 2.8l2.1 4.6 5 .5-3.8 3.4 1.1 4.9L10 13.7l-4.4 2.5 1.1-4.9L2.9 7.9l5-.5z"/>',
+  line: '<path d="M4.5 15.5l11-11"/><circle cx="4.5" cy="15.5" r="1.5"/><circle cx="15.5" cy="4.5" r="1.5"/>',
+  pen: '<path d="M3.5 16.5l3-1 9-9-2-2-9 9z"/><path d="M11.5 6.5l2 2"/>',
+  text: '<path d="M4 5h12M10 5v11M7.5 16h5"/>',
+  hand: '<path d="M7 10.5V5.2a1.3 1.3 0 012.6 0V9.5M9.6 9V4a1.3 1.3 0 012.6 0v5M12.2 9.2V5.6a1.3 1.3 0 012.6 0v6.2a5.2 5.2 0 01-5.2 5.2H9.1a4 4 0 01-3.2-1.6l-2.4-3.3a1.3 1.3 0 012-1.6L7 12"/>',
+  measure: '<path d="M2.5 13.5l11-11 4 4-11 11z"/><path d="M6 10l1.5 1.5M8.5 7.5L10 9M11 5l1.5 1.5"/>',
+  zone: '<rect x="3" y="3" width="14" height="14" rx="1"/><path d="M3 9l6-6M3 15L15 3M7 17l10-10M13 17l4-4"/>',
+  fit: '<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><rect x="7" y="7" width="6" height="6" rx="1"/>',
+  zin: '<circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4M9 6.5v5M6.5 9h5"/>',
+  zout: '<circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4M6.5 9h5"/>',
+  undo: '<path d="M7 5L3.5 8.5 7 12"/><path d="M4 8.5h8a4.5 4.5 0 010 9H9"/>',
+  redo: '<path d="M13 5l3.5 3.5L13 12"/><path d="M16 8.5H8a4.5 4.5 0 000 9h3"/>',
+  play: '<path d="M6 4l10 6-10 6z" fill="currentColor"/>',
+  pause: '<path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor"/>',
+  stop: '<rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor"/>',
+  eye: '<path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.3"/>',
+  eyeoff: '<path d="M3 3l14 14M8.3 5A7 7 0 0110 4.5c5 0 8 5.5 8 5.5a14 14 0 01-2.4 3M12 15.2a7 7 0 01-2 .3c-5 0-8-5.5-8-5.5a14 14 0 013-3.6"/>',
+  up: '<path d="M5 12l5-5 5 5"/>', down: '<path d="M5 8l5 5 5-5"/>',
+  copy: '<rect x="6.5" y="6.5" width="10" height="10" rx="1.5"/><path d="M13.5 6.5v-2a1 1 0 00-1-1h-8a1 1 0 00-1 1v8a1 1 0 001 1h2"/>',
+  trash: '<path d="M4 6h12M8 6V4h4v2M5.5 6l.8 10.5h7.4L14.5 6"/>',
+  svg: '<path d="M4 3.5h8l4 4v9H4z"/><path d="M12 3.5v4h4M10 9.5v5M7.5 12l2.5 2.5 2.5-2.5"/>',
+  image: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><circle cx="7.5" cy="8" r="1.5"/><path d="M3.5 14l4-4 3 3 2.5-2.5 3.5 3.5"/>',
+  file: '<path d="M5 3h7l3 3v11H5z"/><path d="M12 3v3h3"/>',
+  gear: '<path d="M10 2.5l1.3 2.2 2.5-.7.6 2.5 2.4 1-1 2.4 1.6 2-2 1.6.3 2.6-2.6.2-1.1 2.4-2-1.6-2 1.6-1.1-2.4-2.6-.2.3-2.6-2-1.6 1.6-2-1-2.4 2.4-1 .6-2.5 2.5.7z"/><circle cx="10" cy="10" r="2.6"/>',
+  cog: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
+  theme: '<circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 000 13z" fill="currentColor"/>',
+  laser: '<path d="M7 3h6v5H7z"/><path d="M10 8v5" stroke-dasharray="1.6 1.4"/><path d="M6 17h8M8.5 14.5L10 13l1.5 1.5"/>',
+  cnc: '<path d="M8 3h4v4H8zM9 7h2v4l-1 2-1-2z"/><path d="M4 16h12"/><path d="M6 14v2M14 14v2"/>',
+  chev: '<path d="M6 8l4 4 4-4"/>',
+  grid: '<path d="M3 7h14M3 13h14M7 3v14M13 3v14"/>',
+  cube: '<path d="M10 2.5l7 4v7l-7 4-7-4v-7z"/><path d="M3 6.5l7 4 7-4M10 10.5v7"/>',
+  slices: '<path d="M3 14.5l7 3 7-3M3 11.5l7 3 7-3M3 8.5l7 3 7-3M10 2.5l7 3-7 3-7-3z"/>',
+  layers: '<rect x="2.5" y="3" width="11" height="9" rx="1"/><rect x="6.5" y="8" width="11" height="9" rx="1"/><path d="M9 14c1.5-2 3-2.5 6-1"/>',
+  box: '<path d="M3 7l7-3.5L17 7v7l-7 3.5L3 14z"/><path d="M3 7l7 3.5L17 7M10 10.5v7"/><path d="M5.5 8.2v1.6M7.5 9.2v1.6M12.5 9.2v1.6M14.5 8.2v1.6"/>',
+  house: '<path d="M3 9l7-6 7 6"/><path d="M5 7.5V17h10V7.5"/><rect x="8.5" y="11.5" width="3" height="5.5"/><rect x="11.8" y="9" width="2" height="2"/><rect x="6.2" y="9" width="2" height="2"/>',
+  castle: '<path d="M3 17V6h2v2h2V6h2v2h2V6h2v2h2V6h2v11z"/><path d="M8.5 17v-3.5a1.5 1.5 0 013 0V17"/>',
+  frame: '<rect x="3" y="3" width="14" height="14" rx="1"/><rect x="6" y="6" width="8" height="8"/>',
+  puzzle: '<path d="M4 4h4.5a1.8 1.8 0 113 0H16v4.5a1.8 1.8 0 110 3V16h-4.5a1.8 1.8 0 10-3 0H4v-4.5a1.8 1.8 0 100-3z"/>',
+  hinge: '<rect x="3" y="4" width="14" height="12" rx="1"/><path d="M6.5 4v5M6.5 11v5M10 4v2M10 8v4M10 14v2M13.5 4v5M13.5 11v5"/>',
+  qr: '<path d="M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3z"/><path d="M12 12h2v2h-2zM15 15h2v2h-2zM15 12h2M12 16v1"/>',
+  test: '<rect x="3" y="3" width="4" height="4"/><rect x="8" y="3" width="4" height="4"/><rect x="13" y="3" width="4" height="4"/><rect x="3" y="8" width="4" height="4"/><rect x="8" y="8" width="4" height="4"/><rect x="13" y="8" width="4" height="4"/><rect x="3" y="13" width="4" height="4"/><rect x="8" y="13" width="4" height="4"/><rect x="13" y="13" width="4" height="4"/>',
+  kerf: '<path d="M3 4h14M3 16h14"/><path d="M8 4v12M12 4v12" stroke-dasharray="2 1.5"/><path d="M8.5 10h3"/>',
+  joint: '<path d="M3 6h3v3h3V6h3v3h3V6h2"/><path d="M3 14h3v-3h3v3h3v-3h3v3h2"/>',
+  sign: '<rect x="2.5" y="5" width="15" height="10" rx="2"/><circle cx="5" cy="7.5" r=".8"/><circle cx="15" cy="7.5" r=".8"/><path d="M6.5 11.5h7"/>',
+  relief: '<path d="M2.5 15.5c2-5 3.5-7 5-7s2 4 3.5 4 2.5-6 4-6 2 3 2.5 9z"/><path d="M2.5 15.5h15"/>',
+  nest: '<rect x="2.5" y="2.5" width="15" height="15" rx="1"/><path d="M2.5 9h7v8.5M9.5 5.5h8M13 5.5v12"/>',
+  sheet: '<rect x="3.5" y="5" width="13" height="10" rx="1"/><path d="M5 3h12v10"/>',
+  group: '<rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke-dasharray="2 2"/><rect x="5.5" y="5.5" width="5" height="5"/><circle cx="12.5" cy="12.5" r="2.5"/>',
+  ungroup: '<rect x="3" y="3" width="6" height="6"/><circle cx="14" cy="14" r="3"/>',
+  lock: '<rect x="4.5" y="9" width="11" height="8" rx="1.2"/><path d="M7 9V6.5a3 3 0 016 0V9"/>',
+  unlock: '<rect x="4.5" y="9" width="11" height="8" rx="1.2"/><path d="M7 9V6.5a3 3 0 015.8-1"/>',
+  wand: '<path d="M3 17L13 7M11 5l4 4"/><path d="M15 2v3M13.5 3.5h3M17 9v2M16 10h2"/>',
+  plus: '<path d="M10 4v12M4 10h12"/>',
+  home: '<path d="M3.5 9.5L10 4l6.5 5.5M5.5 8v8h9V8"/>',
+  framing: '<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/>',
+  link: '<path d="M8.5 11.5l3-3M7 9l-2 2a2.8 2.8 0 004 4l2-2M13 11l2-2a2.8 2.8 0 00-4-4L9 7"/>',
+  open: '<path d="M3 6.5V15h14V8H9.5L8 6.5z"/>',
+  save: '<path d="M4 4h9.5L16 6.5V16H4z"/><path d="M7 4v4h6V4M7 16v-5h6v5"/>',
+  export: '<path d="M10 13V3M6.5 6.5L10 3l3.5 3.5"/><path d="M4 11v5.5h12V11"/>',
+  newp: '<path d="M5 3h7l3 3v11H5z"/><path d="M10 8.5v5M7.5 11h5"/>',
+  edit: '<path d="M4 16l1-4 8-8 3 3-8 8z"/>',
+  circle: '<circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="3.5" r="1.3" fill="currentColor"/><circle cx="16.5" cy="10" r="1.3" fill="currentColor"/><circle cx="10" cy="16.5" r="1.3" fill="currentColor"/><circle cx="3.5" cy="10" r="1.3" fill="currentColor"/>',
+  split: '<rect x="3" y="3" width="14" height="14" rx="1"/><path d="M10 3v5l-1.5 1.5L10 11v6" stroke-dasharray="2 1.4"/>',
+  smooth: '<path d="M3 14c3-8 5 4 8-4s4-2 6-4"/>',
+  search: '<circle cx="8.5" cy="8.5" r="5"/><path d="M12.3 12.3L17 17"/>',
+  info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.2v.3"/>',
+  warn: '<path d="M10 3l7.5 13h-15z"/><path d="M10 8v4M10 14.2v.3"/>',
+  check: '<path d="M4 10.5l4 4 8-9"/>',
+  device: '<rect x="3" y="5" width="14" height="9" rx="1.5"/><path d="M7 17h6M10 14v3"/><circle cx="6" cy="9.5" r="1"/>',
+  menu: '<path d="M4 6h12M4 10h12M4 14h12"/>',
+  rotl: '<path d="M6 4L3 7l3 3"/><path d="M3.5 7H11a5 5 0 010 10H8"/>',
+  rotr: '<path d="M14 4l3 3-3 3"/><path d="M16.5 7H9a5 5 0 000 10h3"/>',
+  flip: '<path d="M10 3v14" stroke-dasharray="1.6 1.6"/><path d="M8 6L3 14h5zM12 6l5 8h-5z"/>',
+  order: '<path d="M4 5h9M4 10h7M4 15h5"/><path d="M15 4v12M12.5 13.5L15 16l2.5-2.5"/>',
+  folder: '<path d="M3 6.5V15h14V8H9.5L8 6.5z"/><path d="M10 13.5v-4M8 11.5l2-2 2 2"/>',
+  help: '<circle cx="10" cy="10" r="7"/><path d="M7.8 8a2.3 2.3 0 114 1.5c-.9.7-1.8 1.1-1.8 2.3M10 14.3v.3"/>',
+  arc: '<path d="M3 14a8 8 0 0114 0"/><path d="M6 10.5l1 1M10 8v1.4M14 10.5l-1 1"/>',
+};
+const ic = (k, s = 18) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${ICON[k] || ''}</svg>`;
+
+/* ============================== machine profiles ==============================
+   Fields follow appendix A of the spec. Values that cannot be known for a generic
+   preset (laser wattage, real travel, accelerations) stay null = "unknown". */
+const MACHINES = [
+  { id: 'diode10', type: 'laser', name: 'Diode laser 10 W (generic)', maker: null, w: 400, h: 400, origin: 'bl', laserSource: 'diode', watts: 10, smax: 1000, dynamic: true, air: true, hasZ: false, pwm: false, rapid: 6000, maxFeed: 6000, accel: 1000, safeZ: 0, rpm: 0, fw: 'grbl', post: 'grbl_laser' },
+  { id: 'diode20', type: 'laser', name: 'Diode laser 20 W (generic)', maker: null, w: 400, h: 400, origin: 'bl', laserSource: 'diode', watts: 20, smax: 1000, dynamic: true, air: true, hasZ: false, pwm: false, rapid: 9000, maxFeed: 9000, accel: 1500, safeZ: 0, rpm: 0, fw: 'grbl', post: 'grbl_laser' },
+  { id: 'co2-50', type: 'laser', name: 'CO2 laser 50 W (generic)', maker: null, w: 500, h: 300, origin: 'bl', laserSource: 'co2', watts: 50, smax: 1000, dynamic: true, air: true, hasZ: true, pwm: false, rapid: 12000, maxFeed: 24000, accel: 3000, safeZ: 0, rpm: 0, fw: 'grbl', post: 'grbl_laser' },
+  { id: 'cnc3018', type: 'cnc', name: 'CNC 3018 (generic)', maker: null, w: 300, h: 180, zTravel: 45, origin: 'bl', smax: 1000, rapid: 1500, maxFeed: 2000, accel: 100, safeZ: 5, rpm: 10000, rpmMax: 10000, fw: 'grbl', post: 'grbl_cnc' },
+  { id: 'cnc6060', type: 'cnc', name: 'CNC router 6060 (generic)', maker: null, w: 600, h: 600, zTravel: 80, origin: 'bl', smax: 24000, rapid: 5000, maxFeed: 5000, accel: 200, safeZ: 5, rpm: 18000, rpmMax: 24000, fw: 'grbl', post: 'grbl_cnc' },
 ];
-const FONTS={plex:{css:'"IBM Plex Sans"',w:600,n:'IBM Plex Sans'},unb:{css:'"Unbounded"',w:700,n:'Unbounded'},mono:{css:'"JetBrains Mono"',w:700,n:'JetBrains Mono'},serif:{css:'"PT Serif"',w:700,n:'PT Serif'},hand:{css:'"Caveat"',w:600,n:'Caveat'}};
-// laser materials (starting values for a 10 W diode)
-const MATERIALS=[
- {ru:'Фанера',en:'Plywood',t:3,cut:{power:100,speed:300,passes:2},eng:{power:35,speed:3000,interval:.1},score:{power:25,speed:1500}},
- {ru:'Фанера',en:'Plywood',t:4,cut:{power:100,speed:250,passes:3},eng:{power:35,speed:3000,interval:.1},score:{power:25,speed:1500}},
- {ru:'Фанера',en:'Plywood',t:6,cut:{power:100,speed:180,passes:4},eng:{power:35,speed:3000,interval:.1},score:{power:25,speed:1500}},
- {ru:'МДФ',en:'MDF',t:3,cut:{power:100,speed:250,passes:2},eng:{power:30,speed:3000,interval:.1},score:{power:22,speed:1500}},
- {ru:'Акрил (CO2)',en:'Acrylic (CO2)',t:3,cut:{power:65,speed:600,passes:1},eng:{power:20,speed:12000,interval:.08},score:{power:12,speed:6000}},
- {ru:'Кожа',en:'Leather',t:2,cut:{power:90,speed:500,passes:2},eng:{power:25,speed:4000,interval:.1},score:{power:18,speed:2500}},
- {ru:'Картон',en:'Cardboard',t:2,cut:{power:70,speed:900,passes:1},eng:{power:15,speed:5000,interval:.12},score:{power:12,speed:3000}},
- {ru:'Бумага 300 г/м²',en:'Card stock 300 gsm',t:.4,cut:{power:30,speed:1500,passes:1},eng:{power:8,speed:6000,interval:.12},score:{power:6,speed:4000}},
- {ru:'Фетр',en:'Felt',t:2,cut:{power:60,speed:800,passes:1},eng:{power:15,speed:4000,interval:.12},score:{power:12,speed:3000}},
- {ru:'Пробка',en:'Cork',t:3,cut:{power:80,speed:600,passes:2},eng:{power:20,speed:4000,interval:.12},score:{power:15,speed:3000}},
- {ru:'Анодированный алюминий',en:'Anodized aluminium',t:1,cut:null,eng:{power:80,speed:1500,interval:.06},score:{power:80,speed:1000}},
- {ru:'Сланец',en:'Slate',t:5,cut:null,eng:{power:60,speed:2000,interval:.1},score:{power:60,speed:1500}},
-];
-const CNC_MATS=[
- {ru:'Фанера',en:'Plywood',t:6,chip:.05,doc:.5,rpm:12000},
- {ru:'МДФ',en:'MDF',t:6,chip:.06,doc:.6,rpm:12000},
- {ru:'Твёрдое дерево',en:'Hardwood',t:10,chip:.04,doc:.4,rpm:14000},
- {ru:'Акрил',en:'Acrylic',t:3,chip:.04,doc:.3,rpm:15000},
- {ru:'ПВХ / пластик',en:'PVC / plastic',t:4,chip:.05,doc:.4,rpm:12000},
- {ru:'Алюминий',en:'Aluminium',t:3,chip:.015,doc:.15,rpm:18000},
-];
-const TOOLS=[
- {d:1,fl:2,ru:'Концевая 1 мм, 2 зуба',en:'1 mm flat, 2 flute'},
- {d:2,fl:2,ru:'Концевая 2 мм, 2 зуба',en:'2 mm flat, 2 flute'},
- {d:3.175,fl:2,ru:'Концевая 3,175 мм, 2 зуба',en:'3.175 mm flat, 2 flute'},
- {d:3.175,fl:1,ru:'Однозаходная 3,175 мм',en:'3.175 mm single flute'},
- {d:6,fl:2,ru:'Концевая 6 мм, 2 зуба',en:'6 mm flat, 2 flute'},
- {d:6,fl:2,v:90,ru:'V-фреза 90°',en:'V-bit 90°'},
- {d:6,fl:2,v:60,ru:'V-фреза 60°',en:'V-bit 60°'},
-];
-const SHEETS=[['A4',297,210],['A3',420,297],['300×200',300,200],['300×300',300,300],['400×300',400,300],['600×400',600,400]];
-const matList=()=>S.machine.type==='laser'?MATERIALS:CNC_MATS;
-const curMat=()=>{const l=matList();return l[clamp(S.sheet.mat|0,0,l.length-1)]};
-const matName=(m,t)=>`${lang==='ru'?m.ru:m.en} ${fx(t??m.t,2)} ${MM()}`;
+const isLaser = () => S && S.machine.type === 'laser';
 
-function defLayer(i){
- const L={id:i,color:COLORS[i],name:'',on:true,show:true,out:i!==TOOL_L,
-  laser:{mode:'line',power:60,minPower:0,speed:1500,passes:1,interval:.1,angle:0,air:false,kerf:0,bridges:0,bridgeW:.6,overscan:2.5,bidir:true},
-  cnc:{op:'out',depth:3,step:1,feed:800,plunge:250,tool:3.175,stepover:45,rpm:12000,tabs:0,tabH:1.5,tabW:5,vangle:90,vstep:.25}};
- if(i===0){Object.assign(L.laser,{mode:'line',power:100,speed:300,passes:2});L.cnc.op='out';L.cnc.tabs=4}
- if(i===1){Object.assign(L.laser,{mode:'fill',power:35,speed:3000});Object.assign(L.cnc,{op:'pocket',depth:1.5})}
- if(i===2){Object.assign(L.laser,{mode:'line',power:25,speed:1500});Object.assign(L.cnc,{op:'engrave',depth:.4,tool:1,feed:500,plunge:150})}
- return L;
+/* ============================== layers ============================== */
+const COLORS = ['#e5484d', '#3e8ef7', '#30a46c', '#a46ef0', '#f5a524', '#12a5b8', '#e5679f', '#8b95a3', '#d9653b', '#5c6bc0', '#9aa3af'];
+const NL = 11, TOOL_L = 10;
+/* Explicit process types (spec 6.1): colour is never the only signal of a process. */
+const LTYPES = ['cut', 'vector', 'fill', 'raster', 'mark', 'guide'];
+const ltypeName = t => ({ cut: T('Резка', 'Cut'), vector: T('Векторная гравировка', 'Vector engrave'), fill: T('Заливка', 'Fill engrave'), raster: T('Растр (фото)', 'Raster (photo)'), mark: T('Разметка', 'Mark / score'), guide: T('Направляющие', 'Guides') })[t] || t;
+const CNC_OPS = ['out', 'in', 'on', 'pocket', 'engrave', 'vcarve', 'chamfer', 'drill', 'relief'];
+const cncOpName = o => ({ out: T('Контур снаружи', 'Profile outside'), in: T('Контур внутри', 'Profile inside'), on: T('По линии', 'On line'), pocket: T('Карман', 'Pocket'), engrave: T('Гравировка', 'Engrave'), vcarve: T('V-резьба', 'V-carve'), chamfer: T('Фаска', 'Chamfer'), drill: T('Сверление', 'Drill'), relief: T('3D-рельеф', '3D relief') })[o] || o;
+function defLayer(i) {
+  const type = i === 0 ? 'cut' : i === 1 ? 'fill' : i === 2 ? 'mark' : i === 3 ? 'raster' : i === 4 ? 'vector' : i === TOOL_L ? 'guide' : 'cut';
+  return {
+    id: i, color: COLORS[i], name: '', type, on: true, show: true, auto: true,
+    laser: { power: type === 'cut' ? 100 : 30, minPower: 0, speed: type === 'cut' ? 300 : type === 'fill' || type === 'raster' ? 3000 : 1500, passes: type === 'cut' ? 2 : 1, interval: .1, angle: 0, scan: 'h', bidir: true, overscan: 2.5, air: type === 'cut', kerf: 0, kerfSide: 'auto', bridges: 0, bridgeW: .6, focus: 0, pwmFreq: null, joinTol: .05 },
+    cnc: { op: i === 0 ? 'out' : i === 1 ? 'pocket' : i === 2 ? 'engrave' : 'out', toolId: i === 2 ? 'em1' : 'em3', depth: i === 2 ? .4 : 3, step: 1, feed: 800, plunge: 250, rpm: 12000, stepover: 45, tabs: i === 0 ? 4 : 0, tabH: 1.5, tabW: 5, finish: 0, vangle: 90, vstep: .25, chamferW: 1 },
+  };
 }
-function defaultName(L){return L.id===0?T('Резка','Cut'):L.id===1?T('Гравировка','Engrave'):L.id===2?T('Разметка','Score'):L.id===TOOL_L?T('Направляющие','Guides'):T('Слой ','Layer ')+String(L.id+1).padStart(2,'0')}
-const layerName=L=>L.name||defaultName(L);
-function blankState(m,sheet){
- const mm={...(m||MACHINES[0])};
- return{v:2,machine:mm,layers:Array.from({length:NL},(_,i)=>defLayer(i)),order:Array.from({length:NL},(_,i)=>i),shapes:[],nextId:1,nextG:1,plates:1,
-  sheet:Object.assign({on:true,mat:0,thick:3,w:Math.min(300,mm.w-20),h:Math.min(200,mm.h-20),x:10,y:10,margin:3},sheet||{}),
-  job:{innerFirst:true,header:'',footer:''},snap:1,snapOn:true,macros:[{n:'Home',g:'$H'},{n:'Unlock',g:'$X'},{n:T('Настройки','Settings'),g:'$$'},{n:T('Парковка','Park'),g:'G90 G0 X0 Y0'}]};
+const layerOut = L => L.type !== 'guide';
+function defaultLayerName(L) {
+  if (L.id === TOOL_L) return T('Направляющие', 'Guides');
+  if (L.id <= 4) return typeof S !== 'undefined' && S && S.machine.type === 'cnc' ? cncOpName(L.cnc.op) : ltypeName(L.type);
+  return T('Слой ', 'Layer ') + String(L.id + 1).padStart(2, '0');
+}
+const layerName = L => L.name || defaultLayerName(L);
+
+/* ============================== project ============================== */
+function newSheet(o) {
+  return Object.assign({ id: uid('sh'), name: '', w: 300, h: 200, x: 10, y: 10, mat: 'plywood-3', thick: 3, margin: 3, zones: [] }, o || {});
+}
+function blankState(machine, sheetOpts) {
+  const m = deepCopy(machine || MACHINES[0]);
+  const sh = newSheet(Object.assign({ w: Math.min(300, m.w - 20), h: Math.min(200, m.h - 20) }, sheetOpts || {}));
+  if (m.type === 'cnc' && !sheetOpts) { sh.mat = 'c-plywood-6'; sh.thick = 6 }
+  return {
+    v: FORMAT_VERSION, app: APP_NAME, rev: 1, created: new Date().toISOString(),
+    machine: m, post: m.post || (m.type === 'laser' ? 'grbl_laser' : 'grbl_cnc'),
+    layers: Array.from({ length: NL }, (_, i) => defLayer(i)), order: Array.from({ length: NL }, (_, i) => i), orderMode: 'auto',
+    shapes: [], groups: {}, sheets: [sh], mats: {}, assets: {}, layouts: [],
+    nest: { mode: 'multi', spacing: 3, rot: 90, mirror: false, goal: 'sheets', res: 0, kerf: true },
+    job: { innerFirst: true, engraveFirst: true, header: '', footer: '', joinTol: .05, stamp: true },
+    nextId: 1, nextG: 1, snap: 1, snapOn: true,
+    macros: [{ n: 'Home', g: '$H' }, { n: 'Unlock', g: '$X' }, { n: T('Настройки', 'Settings'), g: '$$' }, { n: T('Парковка', 'Park'), g: 'G90 G0 X0 Y0' }],
+  };
 }
 
-/* ================= geometry ================= */
-function rectPts(x,y,w,h,r){r=Math.min(r||0,w/2,h/2);if(r<=0.01)return[[x,y],[x+w,y],[x+w,y+h],[x,y+h]];const p=[],n=10;
- for(const[cx,cy,a0]of[[x+w-r,y+r,-90],[x+w-r,y+h-r,0],[x+r,y+h-r,90],[x+r,y+r,180]])for(let i=0;i<=n;i++){const a=(a0+90*i/n)*Math.PI/180;p.push([cx+r*Math.cos(a),cy+r*Math.sin(a)])}return p}
-function ellipsePts(cx,cy,rx,ry,n){n=n||Math.max(28,Math.min(220,Math.round((rx+ry)*2.2)));const p=[];for(let i=0;i<n;i++){const a=i/n*Math.PI*2;p.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)])}return p}
-function polyPts(cx,cy,r,n){const p=[];for(let i=0;i<n;i++){const a=Math.PI/2+i/n*Math.PI*2;p.push([cx+r*Math.cos(a),cy+r*Math.sin(a)])}return p}
-function starPts(cx,cy,R,ri,n){const p=[];for(let i=0;i<n*2;i++){const a=Math.PI/2+i/(n*2)*Math.PI*2,r=i%2?ri:R;p.push([cx+r*Math.cos(a),cy+r*Math.sin(a)])}return p}
-function bboxOf(paths){const b=[Infinity,Infinity,-Infinity,-Infinity];for(const p of paths)for(const q of p){if(q[0]<b[0])b[0]=q[0];if(q[1]<b[1])b[1]=q[1];if(q[0]>b[2])b[2]=q[0];if(q[1]>b[3])b[3]=q[1]}return b}
-function unionBox(a,b){return[Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[2],b[2]),Math.max(a[3],b[3])]}
-function distSeg(p,a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l:0;t=clamp(t,0,1);return Math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy)}
-function inPolys(pt,paths){let c=false;for(const p of paths){for(let i=0,j=p.length-1;i<p.length;j=i++){const a=p[i],b=p[j];if((a[1]>pt[1])!==(b[1]>pt[1])&&pt[0]<(b[0]-a[0])*(pt[1]-a[1])/(b[1]-a[1])+a[0])c=!c}}return c}
-function area(p){let s=0;for(let i=0,j=p.length-1;i<p.length;j=i++)s+=(p[j][0]-p[i][0])*(p[j][1]+p[i][1]);return s/2}
-function areaOf(paths){let s=0;for(const c of components(paths)){s+=Math.abs(area(c[0]));for(const h of c.slice(1))s-=Math.abs(area(h))}return s}
-function pathLen(p,closed){let s=0;for(let i=1;i<p.length;i++)s+=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);if(closed&&p.length>1)s+=Math.hypot(p[0][0]-p[p.length-1][0],p[0][1]-p[p.length-1][1]);return s}
-function rdp(pts,eps){if(pts.length<3)return pts;let dm=0,ix=0;const a=pts[0],b=pts[pts.length-1];for(let i=1;i<pts.length-1;i++){const d=distSeg(pts[i],a,b);if(d>dm){dm=d;ix=i}}
- if(dm>eps){const l=rdp(pts.slice(0,ix+1),eps),r=rdp(pts.slice(ix),eps);return l.slice(0,-1).concat(r)}return[a,b]}
-function rdpClosed(p,eps){if(p.length<8)return p;let far=0,fi=0;for(let i=1;i<p.length;i++){const d=Math.hypot(p[i][0]-p[0][0],p[i][1]-p[0][1]);if(d>far){far=d;fi=i}}
- const a=rdp(p.slice(0,fi+1),eps),b=rdp(p.slice(fi).concat([p[0]]),eps);return a.slice(0,-1).concat(b.slice(0,-1))}
-const mapPaths=(paths,f)=>paths.map(p=>p.map(q=>f(q[0],q[1])));
-function rotPaths(paths,deg,cx=0,cy=0){if(!deg)return paths;const a=deg*Math.PI/180,c=Math.cos(a),s=Math.sin(a);return mapPaths(paths,(x,y)=>[cx+(x-cx)*c-(y-cy)*s,cy+(x-cx)*s+(y-cy)*c])}
-// split a set of closed loops into components: [outer, ...holes]
-function components(paths){
- const ps=paths.filter(p=>p.length>2).map(p=>({p,a:Math.abs(area(p)),b:bboxOf([p])}));ps.sort((a,b)=>b.a-a.a);
- for(const o of ps){o.d=0;o.par=null;for(const q of ps){if(q===o||q.a<=o.a)continue;if(o.b[0]>=q.b[0]-1e-9&&o.b[2]<=q.b[2]+1e-9&&o.b[1]>=q.b[1]-1e-9&&o.b[3]<=q.b[3]+1e-9&&inPolys(o.p[0],[q.p])){o.d++;if(!o.par||q.a<o.par.a)o.par=q}}}
- const comps=[];for(const o of ps)if(o.d%2===0){o.comp=[o.p];comps.push(o.comp)}
- for(const o of ps)if(o.d%2===1&&o.par&&o.par.comp)o.par.comp.push(o.p);
- return comps;
-}
-// interior point far from edges (for labels / pins)
-function deepPoint(paths,avoid=[],minClear=0){
- const b=bboxOf(paths),step=Math.max((b[2]-b[0])/36,(b[3]-b[1])/36,.4);let best=null,bd=-1;
- for(let y=b[1]+step/2;y<b[3];y+=step)for(let x=b[0]+step/2;x<b[2];x+=step){const p=[x,y];if(!inPolys(p,paths))continue;
-  let d=Infinity;for(const q of paths)for(let i=0;i<q.length;i++){const e=distSeg(p,q[i],q[(i+1)%q.length]);if(e<d)d=e}
-  for(const a of avoid)d=Math.min(d,Math.hypot(a[0]-x,a[1]-y)-(a[2]||0));
-  if(d>bd){bd=d;best=p}}
- return best&&bd>=minClear?{p:best,d:bd}:null;
+/* ---- editor state ---- */
+let S, mode = store.get('mode') || 'pro', tab = store.get('tab') || 'cad', tool = 'select', sel = new Set(), curPlate = 0, curDrawLayer = 0;
+const plateGap = () => Math.max(20, Math.round(S.machine.w * .08));
+const plateX = i => i * (S.machine.w + plateGap());
+function plateOfBox(b) { const pw = S.machine.w + plateGap(), cx = (b[0] + b[2]) / 2; return clamp(Math.floor((cx + plateGap() / 2) / pw), 0, S.sheets.length - 1) }
+const plateOf = s => plateOfBox(bboxOf(s.paths));
+const sheetAt = i => S.sheets[clamp(i, 0, S.sheets.length - 1)];
+const sheetName = (sh, i) => sh.name || T('Лист ', 'Sheet ') + (i + 1);
+const shapeById = id => S.shapes.find(s => s.id === id);
+function addShape(st, layer, kind, paths, closed, extra) { const s = { id: st.nextId++, layer, kind, paths, closed, ...(extra || {}) }; st.shapes.push(s); return s }
+function sheetRectWorld(i) { const sh = sheetAt(i), X = plateX(i); return [X + sh.x, sh.y, X + sh.x + sh.w, sh.y + sh.h] }
+
+/* ---- assets: original images kept once per project, referenced by id ---- */
+function addAsset(dataURL) { const id = 'a' + hashStr(dataURL); if (!S.assets[id]) S.assets[id] = dataURL; return id }
+const assetURL = id => (S.assets && S.assets[id]) || null;
+function pruneAssets(st) {
+  const used = new Set();
+  const walk = o => { if (!o || typeof o !== 'object') return; for (const k in o) { const v = o[k]; if (typeof v === 'string' && /^a[0-9a-z]+$/.test(v) && st.assets[v]) used.add(v); else if (typeof v === 'object') walk(v) } };
+  walk(st.shapes); walk(st.groups); walk(st.layouts);
+  for (const k of Object.keys(st.assets)) if (!used.has(k)) delete st.assets[k];
 }
 
-/* ---- marching-squares tracer (text + bitmap trace + layered art) ---- */
-function traceMask(mask,w,h){
- const at=(x,y)=>(x<0||y<0||x>=w||y>=h)?0:mask[y*w+x];
- const ax=[],ay=[],bx=[],by=[];
- const E=(x,y,e)=>e===0?[2*x+1,2*y]:e===1?[2*x+2,2*y+1]:e===2?[2*x+1,2*y+2]:[2*x,2*y+1];
- const TAB={1:[3,2],2:[2,1],3:[3,1],4:[0,1],5:[3,2,0,1],6:[0,2],7:[3,0],8:[3,0],9:[0,2],10:[3,0,2,1],11:[0,1],12:[3,1],13:[2,1],14:[3,2]};
- for(let y=-1;y<h;y++)for(let x=-1;x<w;x++){const c=at(x,y)*8+at(x+1,y)*4+at(x+1,y+1)*2+at(x,y+1);if(c===0||c===15)continue;const t=TAB[c];
-  for(let k=0;k<t.length;k+=2){const p=E(x,y,t[k]),q=E(x,y,t[k+1]);ax.push(p[0]);ay.push(p[1]);bx.push(q[0]);by.push(q[1])}}
- const n=ax.length,map=new Map(),key=(x,y)=>x*100003+y;
- for(let i=0;i<n;i++){for(const k of[key(ax[i],ay[i]),key(bx[i],by[i])]){const l=map.get(k);l?l.push(i):map.set(k,[i])}}
- const used=new Uint8Array(n),loops=[];
- for(let i=0;i<n;i++){if(used[i])continue;used[i]=1;const loop=[[ax[i]/2,ay[i]/2]];const sk=key(ax[i],ay[i]);let cx=bx[i],cy=by[i],guard=0;
-  while(key(cx,cy)!==sk&&guard++<2e6){loop.push([cx/2,cy/2]);const c=map.get(key(cx,cy));let nx=-1;if(c)for(const j of c)if(!used[j]){nx=j;break}if(nx<0)break;used[nx]=1;
-   if(ax[nx]===cx&&ay[nx]===cy){cx=bx[nx];cy=by[nx]}else{cx=ax[nx];cy=ay[nx]}}
-  if(loop.length>=4)loops.push(loop)}
- return loops;
+/* ============================== history ==============================
+   Snapshots exclude assets (append-only). Each entry has a readable label.
+   Consecutive edits with the same coalescing key within 1.2 s become one step. */
+let undoS = [], redoS = [], lastPush = { key: null, t: 0 };
+const snap = () => JSON.stringify(S, (k, v) => k === 'assets' ? undefined : v);
+function restore(json) { const a = S.assets; S = JSON.parse(json); S.assets = a }
+function pushUndo(label, key) {
+  const now = Date.now();
+  if (key && key === lastPush.key && now - lastPush.t < 1200 && undoS.length) { lastPush.t = now; return false }
+  undoS.push({ label: label || T('Изменение', 'Edit'), state: snap() }); if (undoS.length > 100) undoS.shift();
+  redoS = []; lastPush = { key: key || null, t: now }; return true;
 }
-const textCache=new Map();
-async function makeTextPaths(text,font,size){
- const key=font+'|'+size+'|'+text;if(textCache.has(key))return textCache.get(key);
- const F=FONTS[font]||FONTS.plex,k=Math.max(5,Math.min(24,240/size)),px=size*k,css=`${F.w} ${px}px ${F.css}`;
- try{await document.fonts.load(css,text||'A')}catch(e){}
- const lines=String(text||' ').split('\n'),c=document.createElement('canvas'),x=c.getContext('2d');x.font=css;
- const lw=Math.max(1,...lines.map(l=>x.measureText(l).width)),lh=px*1.22;
- c.width=Math.ceil(lw+px*.4);c.height=Math.ceil(lh*lines.length+px*.4);x.font=css;x.fillStyle='#000';x.textBaseline='alphabetic';x.textAlign='left';
- lines.forEach((l,i)=>x.fillText(l,px*.2,px*.2+px*.92+i*lh));
- const d=x.getImageData(0,0,c.width,c.height).data,m=new Uint8Array(c.width*c.height);for(let i=0;i<m.length;i++)m[i]=d[i*4+3]>110?1:0;
- let loops=traceMask(m,c.width,c.height).map(l=>rdpClosed(l,.45)).filter(l=>l.length>2&&Math.abs(area(l))>2);
- loops=loops.map(l=>l.map(([X,Y])=>[X/k,(c.height-Y)/k]));
- let res=[];if(loops.length){const b=bboxOf(loops);res=mapPaths(loops,(X,Y)=>[X-b[0],Y-b[1]])}
- textCache.set(key,res);return res;
-}
-async function textAt(text,font,size,cx,cy){const p=await makeTextPaths(text,font,size);if(!p.length)return[];const b=bboxOf(p);return mapPaths(p,(x,y)=>[x-(b[2]-b[0])/2+cx,y-(b[3]-b[1])/2+cy])}
+function dropLastUndo() { undoS.pop(); lastPush = { key: null, t: 0 } }
+function undo() { if (!undoS.length) return; const e = undoS.pop(); redoS.push({ label: e.label, state: snap() }); restore(e.state); lastPush = { key: null, t: 0 }; afterHist(T('Отменено: ', 'Undone: ') + e.label) }
+function redo() { if (!redoS.length) return; const e = redoS.pop(); undoS.push({ label: e.label, state: snap() }); restore(e.state); lastPush = { key: null, t: 0 }; afterHist(T('Повторено: ', 'Redone: ') + e.label) }
+const undoLabel = () => undoS.length ? undoS[undoS.length - 1].label : null;
+const redoLabel = () => redoS.length ? redoS[redoS.length - 1].label : null;
+function afterHist(msg) { const ids = new Set(S.shapes.map(s => s.id)); for (const i of [...sel]) if (!ids.has(i)) sel.delete(i); curPlate = Math.min(curPlate, S.sheets.length - 1); if (typeof changed === 'function') changed(); if (msg && typeof toast === 'function') toast(msg) }
 
-/* ---- Clipper (offset & booleans) with fallback ---- */
-const CS=1000,hasClip=()=>typeof ClipperLib!=='undefined';
-const toC=paths=>paths.filter(p=>p.length>2).map(p=>p.map(q=>({X:Math.round(q[0]*CS),Y:Math.round(q[1]*CS)})));
-const fromC=cp=>cp.map(p=>p.map(q=>[q.X/CS,q.Y/CS])).filter(p=>p.length>2);
-const normC=(paths,ft)=>ClipperLib.Clipper.SimplifyPolygons(toC(paths),ft==null?ClipperLib.PolyFillType.pftEvenOdd:ft);
-function offsetPaths(paths,d,join){
- if(!hasClip())return paths.map(p=>missOffset(p,d)).filter(Boolean);
- const co=new ClipperLib.ClipperOffset(2,.02*CS);co.AddPaths(normC(paths),join==='miter'?ClipperLib.JoinType.jtMiter:ClipperLib.JoinType.jtRound,ClipperLib.EndType.etClosedPolygon);
- const sol=new ClipperLib.Paths();co.Execute(sol,d*CS);return fromC(sol);
+/* ============================== serialization ============================== */
+function serialize(st) { const o = Object.assign({}, st, { v: FORMAT_VERSION, app: APP_NAME, saved: new Date().toISOString() }); return JSON.stringify(o) }
+class ProjectError extends Error { }
+/* Parse + migrate + validate. Throws ProjectError with a user-facing message. */
+function parseProject(text) {
+  let j;
+  try { j = typeof text === 'string' ? JSON.parse(text) : text } catch (e) { throw new ProjectError(T('Файл повреждён: это не JSON.', 'The file is damaged: not valid JSON.')) }
+  if (!j || typeof j !== 'object' || !Array.isArray(j.shapes)) throw new ProjectError(T('Это не файл проекта SkyKerf_Studio.', 'This is not a SkyKerf_Studio project file.'))
+  if (j.v > FORMAT_VERSION) throw new ProjectError(T(`Проект создан более новой версией (формат ${j.v}). Обновите программу.`, `The project was made by a newer version (format ${j.v}). Please update the app.`))
+  const from = j.v || 1;
+  if (from < 2) j = migrateV1(j);
+  if (j.v < 3) j = migrateV2(j);
+  normalizeProject(j);
+  return { state: j, migratedFrom: from < FORMAT_VERSION ? from : null };
 }
-function missOffset(p,d){
- const n=p.length,s=area(p)>0?1:-1,o=[];
- for(let i=0;i<n;i++){const a=p[(i-1+n)%n],b=p[i],c=p[(i+1)%n];
-  const n1=norm2([(b[1]-a[1]),-(b[0]-a[0])]),n2=norm2([(c[1]-b[1]),-(c[0]-b[0])]);let m=[n1[0]+n2[0],n1[1]+n2[1]];const ml=Math.hypot(m[0],m[1])||1;m=[m[0]/ml,m[1]/ml];
-  const cos=Math.max(.3,m[0]*n1[0]+m[1]*n1[1]);o.push([b[0]-s*m[0]*d/cos,b[1]-s*m[1]*d/cos])}
- if(d<0&&(Math.sign(area(o))!==Math.sign(area(p))||Math.abs(area(o))<.01))return null;return o;
+function migrateV1(j) {
+  while (j.layers.length < NL) j.layers.push(defLayer(j.layers.length));
+  j.order = (j.order || []).concat([8, 9, 10]).filter((v, i, a) => a.indexOf(v) === i);
+  for (const L of j.layers) { Object.assign(L.laser, Object.assign({ minPower: 0, kerf: 0, bridges: 0, bridgeW: .6, overscan: 2.5, bidir: true }, L.laser)); Object.assign(L.cnc, Object.assign({ vangle: 90, vstep: .25 }, L.cnc)) }
+  j.plates = 1; j.nextG = 1;
+  j.sheet = { on: true, mat: 0, thick: (j.job && j.job.stock) || 3, w: Math.min(300, j.machine.w - 20), h: Math.min(200, j.machine.h - 20), x: 10, y: 10, margin: 3 };
+  j.v = 2; return j;
 }
-function norm2(v){const l=Math.hypot(v[0],v[1])||1;return[v[0]/l,v[1]/l]}
-function boolOp(subj,clip,kind,subjFill){
- if(!hasClip())return kind==='diff'||kind==='union'?subj.concat(kind==='union'?clip:[]):subj;
- const c=new ClipperLib.Clipper(),CT=ClipperLib.ClipType;c.AddPaths(normC(subj,subjFill),ClipperLib.PolyType.ptSubject,true);c.AddPaths(normC(clip,ClipperLib.PolyFillType.pftNonZero),ClipperLib.PolyType.ptClip,true);
- const sol=new ClipperLib.Paths();c.Execute(kind==='union'?CT.ctUnion:kind==='diff'?CT.ctDifference:kind==='xor'?CT.ctXor:CT.ctIntersection,sol,ClipperLib.PolyFillType.pftNonZero,ClipperLib.PolyFillType.pftNonZero);return fromC(sol);
+const V2_LASER_MATS = ['plywood-3', 'plywood-4', 'plywood-6', 'mdf-3', 'acrylic-3-co2', 'leather-2', 'cardboard-2', 'paper-04', 'felt-2', 'cork-3', 'anod-al', 'slate-5'];
+const V2_CNC_MATS = ['c-plywood-6', 'c-mdf-6', 'c-hardwood-10', 'c-acrylic-3', 'c-pvc-4', 'c-alu-3'];
+function migrateV2(j) {
+  const old = j.sheet || { w: 300, h: 200, x: 10, y: 10, thick: 3, margin: 3, mat: 0, on: true };
+  const laser = j.machine.type === 'laser', ml = laser ? V2_LASER_MATS : V2_CNC_MATS;
+  const n = Math.max(1, j.plates | 0);
+  j.sheets = Array.from({ length: n }, () => newSheet({ w: old.on === false ? j.machine.w : old.w, h: old.on === false ? j.machine.h : old.h, x: old.on === false ? 0 : old.x, y: old.on === false ? 0 : old.y, mat: ml[old.mat | 0] || ml[0], thick: old.thick || 3, margin: old.margin ?? 3 }));
+  delete j.sheet; delete j.plates;
+  for (const L of j.layers) {
+    if (L.type) continue;
+    const md = L.laser && L.laser.mode;
+    L.type = L.id === TOOL_L || L.out === false ? 'guide' : md === 'fill' || md === 'both' ? 'fill' : L.id === 2 ? 'mark' : (L.laser && L.laser.power >= 70) ? 'cut' : 'vector';
+    if (md === 'both') L.type = 'fill';
+    L.auto = false; // keep the exact values the old project was made with
+    delete L.out; delete L.laser.mode;
+    Object.assign(L.laser, Object.assign({ scan: 'h', kerfSide: 'auto', focus: 0, pwmFreq: null, joinTol: .05 }, L.laser));
+    const toolMap = { 1: 'em1', 2: 'em2', 3.175: 'em3', 6: 'em6' };
+    L.cnc.toolId = L.cnc.op === 'vcarve' ? (L.cnc.vangle === 60 ? 'v60' : 'v90') : (toolMap[L.cnc.tool] || 'em3');
+    Object.assign(L.cnc, Object.assign({ finish: 0, chamferW: 1 }, L.cnc));
+  }
+  j.assets = j.assets || {};
+  for (const s of j.shapes) if (s.kind === 'image' && s.img && s.img.src) { const id = 'a' + hashStr(s.img.src); j.assets[id] = s.img.src; s.img.asset = id; delete s.img.src }
+  j.groups = j.groups || {}; j.mats = j.mats || {}; j.layouts = []; j.post = laser ? 'grbl_laser' : 'grbl_cnc';
+  j.orderMode = 'manual'; j.nest = { mode: 'multi', spacing: 3, rot: 90, mirror: false, goal: 'sheets', res: 0, kerf: true };
+  j.job = Object.assign({ innerFirst: true, engraveFirst: false, header: '', footer: '', joinTol: .05, stamp: true }, j.job || {});
+  delete j.job.stock;
+  j.v = 3; j.rev = 1; j.app = APP_NAME; return j;
 }
-const unionPaths=paths=>hasClip()?fromC(normC(paths,ClipperLib.PolyFillType.pftNonZero)):paths;
-const cleanPaths=paths=>hasClip()?fromC(normC(paths)):paths;
-
-/* ================= state ================= */
-let S, mode=store.get('kerf.mode')||'pro', tab=store.get('kerf.tab')||'cad', tool='select', sel=new Set(), curPlate=0, curDrawLayer=0;
-let undoS=[],redoS=[], clip=null;
-const plateGap=()=>Math.max(20,Math.round(S.machine.w*.08));
-const plateX=i=>i*(S.machine.w+plateGap());
-function plateOfBox(b){const pw=S.machine.w+plateGap(),cx=(b[0]+b[2])/2;return clamp(Math.floor((cx+plateGap()/2)/pw),0,S.plates-1)}
-const plateOf=s=>plateOfBox(bboxOf(s.paths));
-const shapeById=id=>S.shapes.find(s=>s.id===id);
-function addShape(st,layer,kind,paths,closed,extra){const s={id:st.nextId++,layer,kind,paths,closed,...(extra||{})};st.shapes.push(s);return s}
-function migrate(j){
- if(j.v===1){while(j.layers.length<NL){j.layers.push(defLayer(j.layers.length))}j.order=(j.order||[]).concat([8,9,10]).filter((v,i,a)=>a.indexOf(v)===i);
-  for(const L of j.layers){L.out=L.id!==TOOL_L;Object.assign(L.laser,{minPower:0,kerf:0,bridges:0,bridgeW:.6,overscan:2.5,bidir:true},L.laser);Object.assign(L.cnc,{vangle:90,vstep:.25},L.cnc)}
-  const b=blankState(j.machine);j.plates=1;j.nextG=1;j.sheet=b.sheet;j.sheet.thick=(j.job&&j.job.stock)||3;j.macros=b.macros;j.v=2}
- return j;
-}
-function load(){
- try{const j=JSON.parse(store.get('kerf.project')||'null');if(j&&(j.v===1||j.v===2)&&Array.isArray(j.shapes)){S=migrate(j);return false}}catch(e){}
- S=sampleState(MACHINES[0]);return true;
-}
-let saveT=0,saveWarned=false;
-function save(){clearTimeout(saveT);saveT=setTimeout(()=>{if(!store.set('kerf.project',JSON.stringify(S))&&!saveWarned){saveWarned=true;toast(T('Проект слишком большой для автосохранения в браузере (обычно из-за фото). Сохраните его кнопкой «Сохранить».','The project is too large to auto-save in the browser (usually photos). Use “Save”.'))}},400)}
-function sampleState(m){
- const s=blankState(m);s.sheet=Object.assign(s.sheet,{w:200,h:150,x:20,y:20});
- const g=s.nextG++;
- addShape(s,0,'rect',[rectPts(35,35,100,100,12)],true,{g});
- addShape(s,0,'ellipse',[ellipsePts(49,121,3.5,3.5)],true,{g});
- addShape(s,2,'ellipse',[ellipsePts(85,87,34,34)],true,{g});
- addShape(s,1,'star',[starPts(85,87,27,11.5,5)],true,{g});
- s._sampleText=g;return s;
-}
-function pushUndo(){undoS.push(JSON.stringify(S));if(undoS.length>80)undoS.shift();redoS=[]}
-function undo(){if(!undoS.length)return;redoS.push(JSON.stringify(S));S=JSON.parse(undoS.pop());afterHist()}
-function redo(){if(!redoS.length)return;undoS.push(JSON.stringify(S));S=JSON.parse(redoS.pop());afterHist()}
-function afterHist(){const ids=new Set(S.shapes.map(s=>s.id));for(const i of[...sel])if(!ids.has(i))sel.delete(i);curPlate=Math.min(curPlate,S.plates-1);changed()}
-
-/* material → layer parameters */
-function applyMaterial(){
- const m=curMat(),t=S.sheet.thick;
- if(S.machine.type==='laser'){
-  const k=clamp(t/(m.t||t),.5,3);// thicker sheet of same kind → more passes
-  const L0=S.layers[0].laser,L1=S.layers[1].laser,L2=S.layers[2].laser;
-  if(m.cut)Object.assign(L0,{mode:'line',power:m.cut.power,speed:m.cut.speed,passes:Math.max(1,Math.round(m.cut.passes*k))});
-  Object.assign(L1,{mode:'fill',power:m.eng.power,speed:m.eng.speed,interval:m.eng.interval});
-  Object.assign(L2,{mode:'line',power:m.score.power,speed:m.score.speed,passes:1});
- }else{
-  for(const i of[0,1,2]){const c=S.layers[i].cnc;c.rpm=m.rpm;c.feed=Math.round(m.rpm*2*m.chip*(c.tool<2?.6:1));c.plunge=Math.round(c.feed*.35);c.step=fx(Math.max(.2,c.tool*m.doc),2)}
-  S.layers[0].cnc.depth=fx(t+.2,2);
- }
+/* Fill in missing fields so that hand-edited or partial files do not crash the editor. */
+function normalizeProject(j) {
+  const base = blankState(MACHINES.find(m => m.id === (j.machine && j.machine.id)) || MACHINES[0]);
+  j.machine = Object.assign({}, base.machine, j.machine || {});
+  for (const k of ['groups', 'mats', 'assets', 'nest', 'job']) j[k] = Object.assign({}, base[k], j[k] || {});
+  for (const k of ['layouts', 'macros']) if (!Array.isArray(j[k])) j[k] = base[k];
+  if (!Array.isArray(j.sheets) || !j.sheets.length) j.sheets = base.sheets;
+  j.sheets = j.sheets.map(s => newSheet(s));
+  if (!Array.isArray(j.layers)) j.layers = base.layers;
+  while (j.layers.length < NL) j.layers.push(defLayer(j.layers.length));
+  j.layers = j.layers.map((L, i) => { const d = defLayer(i); return Object.assign(d, L, { laser: Object.assign(d.laser, L.laser || {}), cnc: Object.assign(d.cnc, L.cnc || {}) }) });
+  if (!Array.isArray(j.order) || j.order.length !== NL) j.order = Array.from({ length: NL }, (_, i) => i);
+  j.shapes = j.shapes.filter(s => s && Array.isArray(s.paths) && s.paths.every(p => Array.isArray(p)));
+  let maxId = 0, maxG = 0; for (const s of j.shapes) { maxId = Math.max(maxId, s.id | 0); maxG = Math.max(maxG, s.g | 0); s.layer = clamp(s.layer | 0, 0, NL - 1) }
+  j.nextId = Math.max(j.nextId | 0, maxId + 1); j.nextG = Math.max(j.nextG | 0, maxG + 1);
+  if (!j.post) j.post = j.machine.type === 'laser' ? 'grbl_laser' : 'grbl_cnc';
+  j.v = FORMAT_VERSION; j.rev = j.rev | 0 || 1;
+  return j;
 }
 
-/* ================= toast / modal / busy ================= */
-let toastT=0;function toast(t){const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>e.hidden=true,3800)}
-function openModal(title,body,foot,cls){const d=$('#dialog');d.className='dialog'+(cls?' '+cls:'');d.innerHTML=`<header><h2>${title}</h2><button class="icon-btn" data-act="closeModal" aria-label="${T('Закрыть','Close')}">✕</button></header><div class="body">${body}</div>${foot!=null?`<footer>${foot}</footer>`:''}`;$('#modal').hidden=false}
-let onModalClose=null;
-function closeModal(){$('#modal').hidden=true;if(onModalClose){const f=onModalClose;onModalClose=null;f()}}
-function busy(t){const b=$('#busy');if(t==null){b.hidden=true;return}$('#busyT').textContent=t;b.hidden=false}
-const numF=(label,attrs,val,unit,step=.1,cls='')=>`<label class="fld ${cls}"><span>${label}</span><div class="inp"><input type="number" ${attrs} value="${val}" step="${step}">${unit?`<em>${unit}</em>`:''}</div></label>`;
-const selF=(label,attrs,opts,val,cls='')=>`<label class="fld ${cls}"><span>${label}</span><div class="inp"><select ${attrs}>${opts.map(([v,n])=>`<option value="${esc(v)}" ${String(v)===String(val)?'selected':''}>${esc(n)}</option>`).join('')}</select></div></label>`;
+/* ============================== UI primitives ============================== */
+let toastT = 0;
+function toast(t, kind) { const e = $('#toast'); if (!e) return; e.textContent = t; e.className = 'toast' + (kind ? ' ' + kind : ''); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, kind === 'err' ? 6000 : 3800) }
+let onModalClose = null;
+function openModal(title, body, foot, cls) { const d = $('#dialog'); d.className = 'dialog' + (cls ? ' ' + cls : ''); d.innerHTML = `<header><h2>${title}</h2><button class="icon-btn" data-act="closeModal" aria-label="${T('Закрыть', 'Close')}">✕</button></header><div class="body">${body}</div>${foot != null ? `<footer>${foot}</footer>` : ''}`; $('#modal').hidden = false; const f = d.querySelector('[autofocus]'); if (f) setTimeout(() => f.focus(), 30) }
+function closeModal() { $('#modal').hidden = true; if (onModalClose) { const f = onModalClose; onModalClose = null; f() } }
+/* In-page confirmation (the artifact viewer and our CSP do not allow window.confirm). */
+function confirmBox(title, text, buttons) {
+  return new Promise(res => {
+    const prev = onModalClose; onModalClose = () => res(null);
+    openModal(title, `<p class="note big">${text}</p>`, buttons.map((b, i) => `<button class="${b.primary ? 'primary' : 'btn' + (b.danger ? ' bad' : '')}" data-confirm="${i}">${b.label}</button>`).join(''));
+    $('#dialog').querySelectorAll('[data-confirm]').forEach(el => el.addEventListener('click', () => { onModalClose = null; closeModal(); onModalClose = prev; res(buttons[+el.dataset.confirm].value) }));
+  });
+}
+function busy(t) { const b = $('#busy'); if (!b) return; if (t == null) { b.hidden = true; return } $('#busyT').textContent = t; b.hidden = false }
+const infoBtn = k => `<button type="button" class="info" data-help="${k}" aria-label="${T('Справка', 'Help')}">i</button>`;
+const numF = (label, attrs, val, unit, step = .1, cls = '', help) => `<label class="fld ${cls}"><span>${label}${help ? infoBtn(help) : ''}</span><div class="inp"><input type="number" ${attrs} value="${val}" step="${step}">${unit ? `<em>${unit}</em>` : ''}</div></label>`;
+const selF = (label, attrs, opts, val, cls = '', help) => `<label class="fld ${cls}"><span>${label}${help ? infoBtn(help) : ''}</span><div class="inp"><select ${attrs}>${opts.map(([v, n]) => `<option value="${esc(v)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div></label>`;
+const chkF = (label, attrs, on, cls = '', help) => `<label class="chk ${cls}"><input type="checkbox" ${attrs} ${on ? 'checked' : ''}> <span>${label}</span>${help ? infoBtn(help) : ''}</label>`;
+
+/* ---- error journal (spec 13.4): kept locally, never sent anywhere ---- */
+const ERRLOG = [];
+function logError(where, err) {
+  const line = `${new Date().toISOString()} [${where}] ${err && (err.stack || err.message) || err}`;
+  ERRLOG.push(line); if (ERRLOG.length > 200) ERRLOG.shift();
+  try { if (window.skykerfDesktop && window.skykerfDesktop.log) window.skykerfDesktop.log(line) } catch (e) { }
+}

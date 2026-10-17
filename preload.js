@@ -1,13 +1,24 @@
 'use strict';
-// Exposes a minimal, safe API to the app page (no Node.js access in the renderer).
-const { contextBridge, ipcRenderer } = require('electron');
+// SkyKerf_Studio — a minimal, safe API for the app page (no Node.js access in the renderer).
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-contextBridge.exposeInMainWorld('kerfDesktop', {
+contextBridge.exposeInMainWorld('skykerfDesktop', {
   platform: process.platform,
-  // { name, data, filters } → { ok, path }
-  saveFile: (opts) => ipcRenderer.invoke('kerf:save', opts),
-  // file passed on the command line / via double-click before the page was ready
-  pendingFile: () => ipcRenderer.invoke('kerf:pending'),
+  // { name, data, filters, sidecars? } → { ok, path }
+  saveFile: (opts) => ipcRenderer.invoke('skykerf:save', opts),
+  // { files:[{name,data}] } → asks for a folder → { ok, dir }
+  saveFiles: (opts) => ipcRenderer.invoke('skykerf:saveFiles', opts),
+  // { path?, name, data, backupOld } → { ok, path, backup? }
+  saveProject: (opts) => ipcRenderer.invoke('skykerf:saveProject', opts),
+  showItemInFolder: (p) => ipcRenderer.invoke('skykerf:showItem', p),
+  // file passed on the command line / by double-click before the page was ready
+  pendingFile: () => ipcRenderer.invoke('skykerf:pending'),
   // files opened while the app is already running
-  onOpenFile: (cb) => ipcRenderer.on('kerf:open', (_e, f) => cb(f)),
+  onOpenFile: (cb) => ipcRenderer.on('skykerf:open', (_e, f) => cb(f)),
+  // crash recovery and local error journal (never sent anywhere)
+  autosave: (data) => ipcRenderer.invoke('skykerf:autosave', data),
+  recovery: () => ipcRenderer.invoke('skykerf:recovery'),
+  log: (line) => ipcRenderer.invoke('skykerf:log', line),
+  // real path of a dropped/selected file (Electron ≥ 32 has no File.path)
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file) || null } catch (e) { return null } },
 });

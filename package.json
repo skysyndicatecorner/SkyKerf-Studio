@@ -1,18 +1,26 @@
 {
-  "name": "kerf-studio",
-  "productName": "Kerf Studio",
-  "version": "0.2.0",
-  "description": "Open-source CAD/CAM for laser cutters and CNC routers: design, toolpaths, G-code simulation, machine control, 3D model slicing and nesting.",
+  "name": "skykerf-studio",
+  "productName": "SkyKerf_Studio",
+  "version": "0.3.0",
+  "description": "Open-source CAD/CAM for laser cutters and CNC routers: drawing on real sheets, nesting, toolpaths, postprocessors with validation, G-code preview, machine control, parametric generators, 3D model slicing.",
   "main": "main.js",
   "license": "MIT",
   "author": {
-    "name": "Kerf Studio contributors",
-    "email": "kerf-studio@users.noreply.github.com"
+    "name": "SkyKerf_Studio contributors",
+    "email": "skykerf-studio@users.noreply.github.com"
   },
-  "homepage": "https://github.com/OWNER/kerf-studio",
+  "homepage": "https://github.com/skysyndicatecorner/SkyKerf_Studio",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skysyndicatecorner/SkyKerf_Studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/skysyndicatecorner/SkyKerf_Studio/issues"
+  },
   "private": true,
   "scripts": {
     "start": "electron .",
+    "test": "node --test \"tests/*.test.js\"",
     "dist": "electron-builder --publish never",
     "dist:win": "electron-builder --win --publish never",
     "dist:linux": "electron-builder --linux --publish never"
@@ -23,8 +31,9 @@
   },
   "build": {
     "appId": "org.kerfstudio.app",
-    "productName": "Kerf Studio",
-    "copyright": "Copyright © 2026 Kerf Studio contributors",
+    "productName": "SkyKerf_Studio",
+    "executableName": "skykerf-studio",
+    "copyright": "Copyright © 2026 SkyKerf_Studio contributors",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -40,9 +49,9 @@
     "fileAssociations": [
       {
         "ext": "kerf",
-        "name": "Kerf Studio Project",
-        "description": "Kerf Studio project",
-        "mimeType": "application/x-kerf-project",
+        "name": "SkyKerf_Studio Project",
+        "description": "SkyKerf_Studio project",
+        "mimeType": "application/x-skykerf-project",
         "role": "Editor"
       }
     ],
@@ -59,19 +68,22 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Kerf Studio",
-      "artifactName": "KerfStudio-Setup-${version}.${ext}"
+      "shortcutName": "SkyKerf_Studio",
+      "artifactName": "SkyKerf_Studio-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "KerfStudio-Portable-${version}.${ext}"
+      "artifactName": "SkyKerf_Studio-Portable-${version}.${ext}"
     },
     "linux": {
       "target": ["AppImage", "deb"],
       "category": "Graphics",
       "icon": "build/icon.png",
       "synopsis": "CAD/CAM for laser cutters and CNC routers",
-      "maintainer": "Kerf Studio contributors <kerf-studio@users.noreply.github.com>",
-      "artifactName": "KerfStudio-${version}-${arch}.${ext}"
+      "maintainer": "SkyKerf_Studio contributors <skykerf-studio@users.noreply.github.com>",
+      "artifactName": "SkyKerf_Studio-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "packageName": "skykerf-studio"
     }
   }
 }

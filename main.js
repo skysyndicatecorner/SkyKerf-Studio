@@ -1,137 +1,177 @@
 'use strict';
-// Kerf Studio — Electron main process (Windows, Linux)
+// SkyKerf_Studio — Electron main process (Windows, Linux; macOS builds are left to porters)
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const fss = require('fs');
 
-const OPENABLE = /\.(kerf|json|nc|gcode|gc|ngc|tap)$/i;
+const APP_NAME = 'SkyKerf_Studio';
+const LEGACY_NAMES = ['Kerf Studio', 'kerf-studio']; // userData folders of the 0.1–0.2 builds
+const OPENABLE = /\.(kerf|skykerf|json|nc|gcode|gc|ngc|tap|svg|dxf)$/i;
 const MAX_FILE = 200 * 1024 * 1024;
 let win = null;
 let pendingFile = null;
+const savedPaths = new Set(); // "show in folder" only for files this session wrote
 
-// Only one window: a second launch (e.g. double-clicking a .kerf file) is routed to the running app.
+app.setName(APP_NAME);
+app.setPath('userData', path.join(app.getPath('appData'), APP_NAME));
+
+/* ---------- settings migration from Kerf Studio (copy once, never delete) ---------- */
+function migrateLegacyUserData() {
+  const target = app.getPath('userData'), marker = path.join(target, 'migrated-from-kerf-studio.json');
+  try {
+    if (fss.existsSync(marker)) return;
+    for (const name of LEGACY_NAMES) {
+      const src = path.join(app.getPath('appData'), name);
+      if (!fss.existsSync(src) || path.resolve(src) === path.resolve(target)) continue;
+      fss.mkdirSync(target, { recursive: true });
+      const copied = [];
+      for (const sub of ['Local Storage', 'IndexedDB', 'autosave']) {
+        const from = path.join(src, sub), to = path.join(target, sub);
+        if (fss.existsSync(from) && !fss.existsSync(to)) { fss.cpSync(from, to, { recursive: true, errorOnExist: false }); copied.push(sub) }
+      }
+      fss.writeFileSync(marker, JSON.stringify({ from: src, copied, at: new Date().toISOString(), note: 'The old folder was left untouched.' }, null, 1));
+      return;
+    }
+    fss.mkdirSync(target, { recursive: true });
+    fss.writeFileSync(marker, JSON.stringify({ from: null, at: new Date().toISOString() }));
+  } catch (e) { console.error('migration', e) }
+}
+
+/* ---------- single instance: a second launch (double-clicked file) goes to the running app ---------- */
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  migrateLegacyUserData(); // before Chromium opens the profile
   app.on('second-instance', (_e, argv) => {
     const f = fileFromArgv(argv);
     if (f) sendFile(f);
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
 }
-
-function fileFromArgv(argv) {
-  const p = argv.slice(app.isPackaged ? 1 : 2).find(a => OPENABLE.test(a));
-  return p ? path.resolve(p) : null;
-}
-
+function fileFromArgv(argv) { const p = argv.slice(app.isPackaged ? 1 : 2).find(a => OPENABLE.test(a)); return p ? path.resolve(p) : null }
 async function readFileForRenderer(p) {
-  const st = await fs.stat(p);
-  if (st.size > MAX_FILE) throw new Error('file too large');
-  return { name: path.basename(p), data: await fs.readFile(p, 'utf8') };
+  const st = await fs.stat(p); if (st.size > MAX_FILE) throw new Error('file too large');
+  return { name: path.basename(p), path: p, data: await fs.readFile(p, 'utf8') };
+}
+async function sendFile(p) {
+  try { const f = await readFileForRenderer(p); if (win && !win.webContents.isLoading()) win.webContents.send('skykerf:open', f); else pendingFile = f }
+  catch (e) { dialog.showErrorBox(APP_NAME, `Не удалось открыть файл / Could not open file:\n${p}\n${e.message}`) }
 }
 
-async function sendFile(p) {
+/* ---------- crash recovery: a flag file exists while the app runs ---------- */
+const runFlag = () => path.join(app.getPath('userData'), 'running.flag');
+const autosaveFile = () => path.join(app.getPath('userData'), 'autosave', 'current.kerf');
+let recovery = null;
+function checkRecovery() {
   try {
-    const f = await readFileForRenderer(p);
-    if (win && !win.webContents.isLoading()) win.webContents.send('kerf:open', f);
-    else pendingFile = f;
-  } catch (e) {
-    dialog.showErrorBox('Kerf Studio', `Не удалось открыть файл / Could not open file:\n${p}\n${e.message}`);
-  }
+    if (fss.existsSync(runFlag()) && fss.existsSync(autosaveFile())) { const st = fss.statSync(autosaveFile()); recovery = { time: st.mtimeMs, path: null, data: fss.readFileSync(autosaveFile(), 'utf8') } }
+    fss.mkdirSync(app.getPath('userData'), { recursive: true }); fss.writeFileSync(runFlag(), String(process.pid));
+  } catch (e) { console.error('recovery', e) }
+}
+async function writeAtomic(file, data) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = file + '.tmp-' + process.pid; await fs.writeFile(tmp, data, 'utf8'); await fs.rename(tmp, file);
 }
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 960,
-    minHeight: 620,
-    show: false,
-    backgroundColor: '#121519',
-    title: 'Kerf Studio',
-    icon: path.join(__dirname, 'build', 'icon.png'),
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-    },
+    width: 1440, height: 900, minWidth: 960, minHeight: 620, show: false, backgroundColor: '#121519', title: APP_NAME,
+    icon: path.join(__dirname, 'build', 'icon.png'), autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
   });
   win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 
-  // Links open in the system browser; the app window never navigates away.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith('file://')) { e.preventDefault(); if (/^https?:\/\//i.test(url)) shell.openExternal(url); }
-  });
-
-  // Developer tools only when running from source (npm start).
-  if (!app.isPackaged) {
-    win.webContents.on('before-input-event', (_e, input) => {
-      if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools();
-    });
-  }
+  // Links open in the system browser; the app window never navigates away and loads nothing remote.
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); return { action: 'deny' } });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file://')) { e.preventDefault(); if (/^https:\/\//i.test(url)) shell.openExternal(url) } });
+  if (!app.isPackaged) win.webContents.on('before-input-event', (_e, input) => { if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools() });
 
   const ses = win.webContents.session;
-  // Allow only what the app needs: the machine's serial port and clipboard writes.
-  const ALLOWED = new Set(['serial', 'clipboard-sanitized-write', 'fullscreen']);
+  // Only what the app needs: the machine's serial port, clipboard writes, fullscreen and installed fonts.
+  const ALLOWED = new Set(['serial', 'clipboard-sanitized-write', 'fullscreen', 'local-fonts']);
   ses.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission));
   ses.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED.has(permission)));
   ses.setDevicePermissionHandler(details => details.deviceType === 'serial');
+  ses.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !/^(file|devtools|data|blob):/i.test(details.url) }));
 
-  // Web Serial: show a native list of ports when the app asks for one.
+  // Web Serial: a native list of ports. Connecting never starts a job.
   ses.on('select-serial-port', async (event, portList, _wc, callback) => {
     event.preventDefault();
     if (!portList.length) {
-      await dialog.showMessageBox(win, {
-        type: 'info', title: 'Kerf Studio',
-        message: 'Порты не найдены / No serial ports found',
-        detail: 'Подключите станок по USB и проверьте драйвер (CH340, CP210x, FTDI).\nConnect the machine over USB and check the driver (CH340, CP210x, FTDI).\nLinux: sudo usermod -aG dialout $USER',
-      });
-      callback('');
-      return;
+      await dialog.showMessageBox(win, { type: 'info', title: APP_NAME, message: 'Порты не найдены / No serial ports found', detail: 'Подключите станок по USB и проверьте драйвер (CH340, CP210x, FTDI).\nConnect the machine over USB and check the driver (CH340, CP210x, FTDI).\nLinux: sudo usermod -aG dialout $USER' });
+      callback(''); return;
     }
-    const labels = portList.map(p => `${p.portName || p.portId}${p.displayName ? ' — ' + p.displayName : ''}`);
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'question', title: 'Kerf Studio',
-      message: 'Выберите порт станка / Choose the machine port',
-      buttons: [...labels, 'Отмена / Cancel'],
-      cancelId: labels.length, noLink: true,
-    });
+    const labels = portList.map(p => `${p.portName || p.portId}${p.displayName ? ' — ' + p.displayName : ''}${p.vendorId ? ` [${p.vendorId}:${p.productId}]` : ''}`);
+    const { response } = await dialog.showMessageBox(win, { type: 'question', title: APP_NAME, message: 'Выберите порт станка / Choose the machine port', buttons: [...labels, 'Отмена / Cancel'], cancelId: labels.length, noLink: true });
     callback(response < portList.length ? portList[response].portId : '');
   });
 }
 
-ipcMain.handle('kerf:save', async (_e, opts) => {
-  const name = path.basename(String((opts && opts.name) || 'untitled.txt'));
-  const data = opts && opts.data;
-  if (typeof data !== 'string' || data.length > MAX_FILE) throw new Error('invalid data');
-  const filters = Array.isArray(opts.filters) ? opts.filters.slice(0, 4).map(f => ({
-    name: String(f.name || 'File'),
-    extensions: Array.isArray(f.extensions) ? f.extensions.map(x => String(x).replace(/[^a-z0-9]/gi, '')).filter(Boolean) : ['*'],
-  })) : [];
-  const r = await dialog.showSaveDialog(win, { defaultPath: name, filters: [...filters, { name: 'All files', extensions: ['*'] }] });
-  if (r.canceled || !r.filePath) return { ok: false };
-  await fs.writeFile(r.filePath, data, 'utf8');
-  return { ok: true, path: r.filePath };
-});
+/* ---------- IPC: files ---------- */
+const cleanName = n => path.basename(String(n || 'untitled.txt')).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').slice(0, 180) || 'untitled.txt';
+const cleanFilters = f => Array.isArray(f) ? f.slice(0, 4).map(x => ({ name: String(x.name || 'File'), extensions: Array.isArray(x.extensions) ? x.extensions.map(e => String(e).replace(/[^a-z0-9]/gi, '')).filter(Boolean) : ['*'] })) : [];
+const checkData = d => { if (typeof d !== 'string' || d.length > MAX_FILE) throw new Error('invalid data') };
 
-ipcMain.handle('kerf:pending', () => { const f = pendingFile; pendingFile = null; return f; });
+ipcMain.handle('skykerf:save', async (_e, o) => {
+  o = o || {}; checkData(o.data);
+  const r = await dialog.showSaveDialog(win, { defaultPath: cleanName(o.name), filters: [...cleanFilters(o.filters), { name: 'All files', extensions: ['*'] }] });
+  if (r.canceled || !r.filePath) return { ok: false };
+  await fs.writeFile(r.filePath, o.data, 'utf8'); savedPaths.add(r.filePath);
+  const side = [];
+  for (const s of Array.isArray(o.sidecars) ? o.sidecars.slice(0, 6) : []) {
+    checkData(s.data); const base = s.stripExt ? r.filePath.replace(/\.[^.\\/]+$/, '') : r.filePath;
+    const p = base + String(s.suffix || '.txt').replace(/[\\/:*?"<>|]/g, '_'); await fs.writeFile(p, s.data, 'utf8'); savedPaths.add(p); side.push(p);
+  }
+  return { ok: true, path: r.filePath, sidecars: side };
+});
+ipcMain.handle('skykerf:saveFiles', async (_e, o) => {
+  o = o || {}; const files = Array.isArray(o.files) ? o.files.slice(0, 200) : []; if (!files.length) return { ok: false };
+  const r = await dialog.showOpenDialog(win, { title: 'Папка для файлов / Folder for the files', properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return { ok: false };
+  const dir = r.filePaths[0], targets = files.map(f => { checkData(f.data); return path.join(dir, cleanName(f.name)) });
+  const exists = targets.filter(p => fss.existsSync(p));
+  if (exists.length) {
+    const { response } = await dialog.showMessageBox(win, { type: 'warning', title: APP_NAME, message: `Файлов уже существует: ${exists.length}. Заменить? / ${exists.length} file(s) already exist. Replace them?`, detail: exists.slice(0, 8).map(p => path.basename(p)).join('\n'), buttons: ['Заменить / Replace', 'Отмена / Cancel'], cancelId: 1, noLink: true });
+    if (response !== 0) return { ok: false };
+  }
+  for (let i = 0; i < files.length; i++) { await fs.writeFile(targets[i], files[i].data, 'utf8'); savedPaths.add(targets[i]) }
+  savedPaths.add(dir); return { ok: true, dir, path: targets[0] };
+});
+ipcMain.handle('skykerf:saveProject', async (_e, o) => {
+  o = o || {}; checkData(o.data); let p = o.path ? path.resolve(String(o.path)) : null;
+  if (p && !/\.(kerf|skykerf|json)$/i.test(p)) p = null;
+  if (!p) {
+    const r = await dialog.showSaveDialog(win, { defaultPath: cleanName(o.name || 'project.kerf'), filters: [{ name: 'SkyKerf_Studio project', extensions: ['kerf'] }] });
+    if (r.canceled || !r.filePath) return { ok: false }; p = r.filePath;
+  }
+  let backup = null;
+  if (o.backupOld && fss.existsSync(p)) { // keep the old-format file before overwriting it
+    const base = p.replace(/\.[^.\\/]+$/, ''); let k = 0; do { backup = `${base}.backup${k ? '-' + k : ''}.kerf`; k++ } while (fss.existsSync(backup));
+    await fs.copyFile(p, backup);
+  }
+  await writeAtomic(p, o.data); savedPaths.add(p); return { ok: true, path: p, backup };
+});
+ipcMain.handle('skykerf:showItem', (_e, p) => { if (typeof p === 'string' && savedPaths.has(p)) shell.showItemInFolder(p); return true });
+ipcMain.handle('skykerf:pending', () => { const f = pendingFile; pendingFile = null; return f });
+ipcMain.handle('skykerf:autosave', async (_e, data) => { checkData(data); await writeAtomic(autosaveFile(), data); return true });
+ipcMain.handle('skykerf:recovery', () => { const r = recovery; recovery = null; return r });
+ipcMain.handle('skykerf:log', async (_e, line) => {
+  // Error journal: stays on this computer, never sent anywhere.
+  const dir = path.join(app.getPath('userData'), 'logs'), f = path.join(dir, 'skykerf.log');
+  await fs.mkdir(dir, { recursive: true });
+  try { const st = await fs.stat(f); if (st.size > 1024 * 1024) await fs.rename(f, f + '.1') } catch (e) { }
+  await fs.appendFile(f, String(line).slice(0, 8000) + '\n', 'utf8'); return true;
+});
 
 app.whenReady().then(async () => {
-  if (process.platform === 'win32') app.setAppUserModelId('org.kerfstudio.app');
+  checkRecovery();
+  if (process.platform === 'win32') app.setAppUserModelId('org.kerfstudio.app'); // kept from 0.2 so updates replace the old install
   Menu.setApplicationMenu(null);
   const f = fileFromArgv(process.argv);
-  // Read the start-up file before the page loads, so the page can pick it up at boot.
-  if (f) { try { pendingFile = await readFileForRenderer(f); } catch (e) { dialog.showErrorBox('Kerf Studio', `${f}\n${e.message}`); } }
+  if (f) { try { pendingFile = await readFileForRenderer(f) } catch (e) { dialog.showErrorBox(APP_NAME, `${f}\n${e.message}`) } }
   createWindow();
 });
-
+app.on('will-quit', () => { try { fss.rmSync(runFlag(), { force: true }) } catch (e) { } });
 app.on('window-all-closed', () => app.quit());

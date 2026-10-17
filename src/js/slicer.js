@@ -1,5 +1,10 @@
 'use strict';
-/* ================= Kerf Studio · 3D model slicer (STL/OBJ → stacked or interlocked sheet parts) ================= */
+/* ============================================================================
+   SkyKerf_Studio · 3D model slicer (spec 10.1)
+   STL/OBJ → stacked layers (horizontal, vertical or diagonal) with optional
+   alignment dowels, or an interlocked slotted grid. Parts go through the
+   shared nesting subsystem.
+   ============================================================================ */
 
 /* ---------- three.js viewer (shared with generators) ---------- */
 function createViewer(canvas){
@@ -65,6 +70,7 @@ function sampleTorus(){const R=55,r=22,nu=96,nv=40,pos=[],idx=[];
  return{pos:new Float32Array(pos),idx:new Uint32Array(idx)}}
 
 /* ---------- state ---------- */
+const slReq=()=>({thick:SL.t,mat:sheetAt(curPlate).mat});
 const SL={base:null,name:'',size:150,method:'stack',axis:'z',t:3,dowels:true,dd:4,dn:2,reg:true,nums:true,ca:6,cb:6,diag:false,fit:.15,view:'both',res:null,viewer:null,mesh:null,dims:[0,0,0],spacing:3};
 function meshBounds(pos){const b=[Infinity,Infinity,Infinity,-Infinity,-Infinity,-Infinity];for(let i=0;i<pos.length;i+=3)for(let k=0;k<3;k++){const v=pos[i+k];if(v<b[k])b[k]=v;if(v>b[k+3])b[k+3]=v}return b}
 function slPrepare(){const p=SL.base.pos,b=meshBounds(p),k=SL.size/((b[5]-b[2])||1),out=new Float32Array(p.length);
@@ -103,12 +109,12 @@ function pickPins(reg,count,avoid,minSep){
  return out;
 }
 async function labelItem(text,comp,avoid){
- for(const sz of[6,4.5,3,2.2]){const need=sz*.36*Math.max(2,text.length)+sz*.2,dp=deepPoint(comp,avoid,need);if(dp){const p=await textAt(text,'mono',sz,dp.p[0],dp.p[1]);if(p.length)return{layer:2,kind:'text',paths:p,closed:true,extra:{text,font:'mono',size:sz,rot:0}}}}
+ for(const sz of[6,4.5,3,2.2]){const need=sz*.36*Math.max(2,text.length)+sz*.2,dp=deepPoint(comp,avoid,need);if(dp){const p=await textAt(text,'mono',sz,dp.p[0],dp.p[1]);if(p.length)return{layer:markLayer(),kind:'text',paths:p,closed:true,extra:{text,font:'mono',size:sz,rot:0}}}}
  return null;
 }
 const LETTERS='abcdefghijklmnopqrstuvwxyz';
 async function slStack(){
- const mesh=SL.mesh,A={z:{n:[0,0,1],u:[1,0,0],v:[0,1,0]},x:{n:[1,0,0],u:[0,1,0],v:[0,0,1]},y:{n:[0,1,0],u:[1,0,0],v:[0,0,1]}}[SL.axis];
+ const mesh=SL.mesh,q=Math.SQRT1_2,A={z:{n:[0,0,1],u:[1,0,0],v:[0,1,0]},x:{n:[1,0,0],u:[0,1,0],v:[0,0,1]},y:{n:[0,1,0],u:[1,0,0],v:[0,0,1]},d:{n:[q,q,0],u:[-q,q,0],v:[0,0,1]}}[SL.axis]||{n:[0,0,1],u:[1,0,0],v:[0,1,0]};
  const[lo,hi]=axisRange(mesh,A.n),L=hi-lo,t=SL.t,n=clamp(Math.round(L/t),1,600),step=L/n,slices=[],warn=[];
  for(let k=0;k<n;k++){slices.push(sliceAt(mesh,A.n,lo+(k+.5)*step,A.u,A.v));if(k%6===5){busy(T(`Режу слои: ${k+1} из ${n}`,`Slicing: ${k+1} of ${n}`));await sleep(0)}}
  const pins=[],r=SL.dd/2,marg=Math.max(1.5,SL.dd*.4);
@@ -121,15 +127,18 @@ async function slStack(){
   let un=0;for(let k=0;k<n-1;k++)if(slices[k].length&&slices[k+1].length&&!pins.some(p=>p.k0<=k&&p.k1>=k+1))un++;
   if(un)warn.push(T(`Пар слоёв без штифтов: ${un} — там слои склеиваются по гравировке-разметке.`,`${un} layer pairs have no dowel — glue them using the score marks.`))}
  if(SL.dowels&&!hasClip())warn.push(T('Штифты недоступны без библиотеки Clipper.','Dowels need the Clipper library.'));
+ // assembly sequence check: every layer must rest on the previous one
+ if(hasClip()){let floating=[];for(let k=1;k<n;k++){if(!slices[k].length||!slices[k-1].length)continue;const it=boolOp(slices[k],slices[k-1],'inter');if(!it.length||areaOf(it)<1)floating.push(k+1)}
+  if(floating.length)warn.push(T(`Слои без опоры на предыдущий: ${floating.slice(0,8).join(', ')}${floating.length>8?'…':''} — понадобится подставка или склейка с поддержкой.`,`Layers not resting on the previous one: ${floating.slice(0,8).join(', ')}${floating.length>8?'…':''} — they need a support while gluing.`))}
  const parts=[],asm=[],hr=r+SL.fit/2;
  for(let k=0;k<n;k++){if(!slices[k].length)continue;if(k%5===4){busy(T(`Готовлю детали: ${k+1} из ${n}`,`Preparing parts: ${k+1} of ${n}`));await sleep(0)}
   const myPins=pins.filter(p=>p.k0<=k&&p.k1>=k),paths=slices[k].concat(myPins.map(p=>ellipsePts(p.x,p.y,hr,hr,28))),comps=components(paths);
   let reg=[];if(SL.reg&&k<n-1&&slices[k+1].length&&hasClip()){const it=boolOp(slices[k+1],slices[k],'inter');if(it.length)reg=offsetPaths(it,-.5)}
   const nm=String(k+1);
   for(let ci=0;ci<comps.length;ci++){const comp=comps[ci],label=nm+(comps.length>1?LETTERS[ci%26]:''),items=[{layer:0,kind:'part',paths:comp,closed:true}];
-   const myReg=reg.filter(l=>inPolys(l[0],comp));if(myReg.length)items.push({layer:2,kind:'part',paths:myReg,closed:true});
+   const myReg=reg.filter(l=>inPolys(l[0],comp));if(myReg.length)items.push({layer:markLayer(),kind:'part',paths:myReg,closed:true});
    if(SL.nums){const it=await labelItem(label,comp,myPins.map(p=>[p.x,p.y,hr+1]));if(it)items.push(it)}
-   parts.push({name:T('Слой ','Layer ')+label,items});asm.push({paths:comp,origin:A.n.map(c=>c*(lo+k*t)),u:A.u,v:A.v,n:A.n,t,color:hslHex(28+(k%2)*6,42+(k%3)*6,58+(k%2)*8)})}}
+   parts.push({name:T('Слой ','Layer ')+label,items,req:slReq()});asm.push({paths:comp,origin:A.n.map(c=>c*(lo+k*t)),u:A.u,v:A.v,n:A.n,t,color:hslHex(28+(k%2)*6,42+(k%3)*6,58+(k%2)*8)})}}
  const bomMap=new Map();for(const p of pins){const len=fx((p.k1-p.k0+1)*t-1,1);bomMap.set(len,(bomMap.get(len)||0)+1)}
  const bom=[...bomMap].sort((a,b)=>b[0]-a[0]).map(([l,c])=>T(`Штифт ⌀${SL.dd} × ${l} мм — ${c} шт.`,`Dowel ⌀${SL.dd} × ${l} mm — ${c} pcs`));
  return{parts,asm,warn,bom,info:T(`${n} слоёв по ${t} мм · деталей: ${parts.length}`,`${n} layers of ${t} mm · ${parts.length} parts`)};
@@ -149,7 +158,7 @@ async function slWaffle(){
  else warn.push(T('Пазы недоступны без библиотеки Clipper.','Slots need the Clipper library.'));
  const parts=[],asm=[];
  const add=async(set,offs,pref,n,u,col)=>{for(let i=0;i<set.length;i++){const comps=components(set[i]);for(let ci=0;ci<comps.length;ci++){const comp=comps[ci],label=pref+(i+1)+(comps.length>1?LETTERS[ci%26]:''),items=[{layer:0,kind:'part',paths:comp,closed:true}];
-  if(SL.nums){const it=await labelItem(label,comp,[]);if(it)items.push(it)}parts.push({name:label,items});asm.push({paths:comp,origin:n.map(q=>q*(offs[i]-t/2)),u,v:Z,n,t,color:col})}}};
+  if(SL.nums){const it=await labelItem(label,comp,[]);if(it)items.push(it)}parts.push({name:label,items,req:slReq()});asm.push({paths:comp,origin:n.map(q=>q*(offs[i]-t/2)),u,v:Z,n,t,color:col})}}};
  await add(A,offA,'A',nA,tA,hslHex(30,45,60));await add(B,offB,'B',nB,tB,hslHex(205,30,62));
  return{parts,asm,warn,bom:[T('Рёбра A ставятся пазами вниз, рёбра B — пазами вверх, номера идут слева направо.','Ribs A go slots-down, ribs B slots-up; numbers run left to right.'),T(`Ширина паза ${fx(w,2)} мм — подгонка ${SL.fit} мм.`,`Slot width ${fx(w,2)} mm — fit ${SL.fit} mm.`)],info:T(`Решётка ${ca}×${cb}${SL.diag?' под 45°':''} · деталей: ${parts.length}`,`Grid ${ca}×${cb}${SL.diag?' at 45°':''} · ${parts.length} parts`)};
 }
@@ -157,9 +166,9 @@ async function slWaffle(){
 /* ---------- workspace UI ---------- */
 function openSlicer(){
  if(!SL.base){SL.base=sampleVase();SL.name=T('Ваза (пример)','Vase (sample)');SL.size=150}
- SL.t=S.sheet.thick;slPrepare();
+ const sh0=sheetAt(curPlate),m0=matById(sh0.mat);SL.t=sh0.thick;if(!SL.fitTouched)SL.fit=fx(((m0&&m0.fit!=null)?m0.fit:.05)+.1,2);slPrepare();
  openModal(`${ic('slices',18)} ${T('3D-модель → слои','3D model → sheet parts')}`,`<div class="ws-view"><canvas id="slCv"></canvas><div class="float" id="slVb"></div><div class="badge" id="slInfo">…</div></div><div class="ws-side" id="slSide"></div>`,
-  `<p class="note">${T('Детали появятся на слое «Резка», номера и разметка — на «Разметке».','Parts go to the Cut layer; numbers and alignment marks to Score.')}</p>${numF(T('Зазор','Spacing'),'data-sl="spacing" min="0" style="width:70px"',SL.spacing,MM(),.5)}<button class="btn" data-act="closeModal">${T('Отмена','Cancel')}</button><button class="primary" data-act="slPlace">${ic('nest',15)} ${T('Разложить на листах','Nest onto sheets')}</button>`,'xl');
+  `<p class="note">${T('Детали лягут на слой «Резка», номера и разметка — на «Разметку». Дальше откроется раскладка: один лист, несколько или текущий.','Parts go to the Cut layer; numbers and marks to Mark. Nesting opens next: one sheet, several or the current one.')}</p><button class="btn" data-act="closeModal">${T('Отмена','Cancel')}</button><button class="primary" data-act="slPlace">${ic('nest',15)} ${T('Разложить…','Nest…')}</button>`,'xl');
  onModalClose=()=>{if(SL.viewer){SL.viewer.dispose();SL.viewer=null}};
  SL.viewer=createViewer($('#slCv'));if(!SL.viewer)$('#slInfo').textContent=T('3D-просмотр недоступен (нет WebGL), но нарезка работает.','3D preview unavailable (no WebGL), slicing still works.');
  slRenderSide();slRefresh(true);
@@ -175,7 +184,7 @@ function slRenderSide(){
   <div class="sec"><h3>${T('Способ сборки','Construction')}</h3>
   <div class="seg full"><button data-act="slMethod" data-v="stack" aria-pressed="${st}">${T('Стопка слоёв','Stacked layers')}</button><button data-act="slMethod" data-v="waffle" aria-pressed="${!st}">${T('Решётка с пазами','Interlocked grid')}</button></div>
   ${numF(T('Толщина листа','Sheet thickness'),'data-sl="t" min="0.2"',SL.t,MM(),.1)}
-  ${st?`${selF(T('Направление слоёв','Slice direction'),'data-sl="axis"',[['z',T('горизонтально (по Z)','horizontal (along Z)')],['x',T('вертикально (по X)','vertical (along X)')],['y',T('вертикально (по Y)','vertical (along Y)')]],SL.axis)}
+  ${st?`${selF(T('Направление слоёв','Slice direction'),'data-sl="axis"',[['z',T('горизонтально (по Z)','horizontal (along Z)')],['x',T('вертикально (по X)','vertical (along X)')],['y',T('вертикально (по Y)','vertical (along Y)')],['d',T('вертикально по диагонали (45°)','vertical diagonal (45°)')]],SL.axis)}
    <label class="chk"><input type="checkbox" data-sl="dowels" ${SL.dowels?'checked':''}> ${T('Точки крепления (штифты)','Alignment dowels')}</label>
    ${SL.dowels?`<div class="grid2">${numF(T('Диаметр штифта','Dowel diameter'),'data-sl="dd" min="1"',SL.dd,MM(),.5)}${numF(T('Штифтов на группу','Dowels per group'),'data-sl="dn" min="1" max="4"',SL.dn,'',1)}</div>`:''}
    <label class="chk"><input type="checkbox" data-sl="reg" ${SL.reg?'checked':''}> ${T('Разметка контура следующего слоя','Score the outline of the next layer')}</label>`:
@@ -189,7 +198,7 @@ let slT=0;
 function slRefresh(refit){clearTimeout(slT);slT=setTimeout(async()=>{
  if(SL.viewer){SL.viewer.setMesh(SL.mesh);if(refit)SL.viewer.fit([0,0,0,...SL.dims])}
  try{SL.res=SL.method==='stack'?await slStack():await slWaffle()}catch(e){SL.res=null;$('#slInfo').textContent='⚠ '+(e.message||e)}finally{busy(null)}
- if(!SL.res||!$('#slRes'))return;const r=SL.res,area=r.parts.reduce((s,p)=>s+areaOf(p.items[0].paths),0),A=nestArea(),sheets=Math.max(1,Math.ceil(area/(A.w*A.h*.62)));
+ if(!SL.res||!$('#slRes'))return;const r=SL.res,area=r.parts.reduce((s,p)=>s+areaOf(p.items[0].paths),0),sh=sheetAt(curPlate),A={w:sh.w-2*sh.margin,h:sh.h-2*sh.margin},sheets=Math.max(1,Math.ceil(area/(A.w*A.h*.62)));
  $('#slInfo').textContent=r.info;
  $('#slRes').innerHTML=[`<b>${T('Деталей','Parts')}: ${r.parts.length}</b>`,T(`Материал ≈ ${fx(area/100,0)} см² · листов ≈ ${sheets} (${fx(A.w,0)}×${fx(A.h,0)} мм)`,`Material ≈ ${fx(area/100,0)} cm² · sheets ≈ ${sheets} (${fx(A.w,0)}×${fx(A.h,0)} mm)`),...r.bom.map(esc),...r.warn.map(w=>`<span style="color:var(--warn)">⚠ ${esc(w)}</span>`)].map(x=>`<div>${x}</div>`).join('');
  if(SL.viewer){SL.viewer.setPlates(r.asm);slApplyView()}},refit?60:260)}
@@ -199,9 +208,9 @@ async function slLoadFile(f){
  try{const buf=await f.arrayBuffer(),soup=/\.obj$/i.test(f.name)?parseOBJ(new TextDecoder().decode(buf)):parseSTL(buf);if(soup.length<9)throw new Error(T('В файле нет треугольников.','The file has no triangles.'));
   SL.base=indexMesh(soup);SL.name=f.name;const b=meshBounds(SL.base.pos);SL.size=fx(clamp(b[5]-b[2],10,300),1);slPrepare();
   if(!$('#slSide'))openSlicer();else{slRenderSide();slRefresh(true)}}
- catch(e){toast(T('Не удалось прочитать модель: ','Could not read the model: ')+(e.message||e))}finally{busy(null)}
+ catch(e){logError('slicer',e);toast(T('Не удалось прочитать модель: ','Could not read the model: ')+(e.message||e),'err')}finally{busy(null)}
 }
 function slSet(k,v){if(['size','t','dd','dn','ca','cb','fit','spacing'].includes(k)){v=parseFloat(v);if(!isFinite(v))return}
- SL[k]=v;if(k==='size'){SL.size=Math.max(5,v);slPrepare();slRenderSide();slRefresh(true);return}if(k==='spacing')return;
+ if(k==='fit')SL.fitTouched=true;SL[k]=v;if(k==='size'){SL.size=Math.max(5,v);slPrepare();slRenderSide();slRefresh(true);return}if(k==='spacing')return;
  if(['dowels','axis','method'].includes(k))slRenderSide();slRefresh(false)}
-async function slPlace(){if(!SL.res||!SL.res.parts.length){toast(T('Нет деталей для раскладки.','No parts to nest.'));return}const parts=SL.res.parts,bom=SL.res.bom;closeModal();await placeParts(parts,{nest:true,spacing:SL.spacing});if(bom.length)setTimeout(()=>toast(bom[0]),3900)}
+function slPlace(){if(!SL.res||!SL.res.parts.length){toast(T('Нет деталей для раскладки.','No parts to nest.'));return}const parts=SL.res.parts;for(const p of parts)p.group={nm:p.name,slicer:{model:SL.name,method:SL.method,t:SL.t}};closeModal();placeParts(parts,{title:T('Детали из 3D-модели','Parts from the 3D model')})}

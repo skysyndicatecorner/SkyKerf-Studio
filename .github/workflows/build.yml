@@ -1,41 +1,68 @@
+name: Build desktop
 
-name: Build Kerf Studio
-
+# Manually (Actions → Build desktop → Run workflow) or automatically when a
+# GitHub Release is published — then the installers are attached to it.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+  release:
+    types: [published]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-
+  test:
+    runs-on: ubuntu-latest
     steps:
-      - name: Download source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node --test "tests/*.test.js"
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build Windows application
-        run: npx electron-builder --win --publish never
+      - name: Build installers
+        run: npx electron-builder ${{ matrix.target }} --publish never
         env:
+          # No code-signing certificate in this repository. Signing secrets, if you
+          # add them later, belong in Settings → Secrets, never in the repository.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Save installers
-        uses: actions/upload-artifact@v4
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
         with:
-          name: KerfStudio-Windows
+          name: SkyKerf_Studio-${{ runner.os }}
+          if-no-files-found: error
           path: |
             dist/*.exe
-            dist/*.zip
-          if-no-files-found: error
+            dist/*.AppImage
+            dist/*.deb
+
+      - name: Attach files to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb

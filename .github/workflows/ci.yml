@@ -1,0 +1,23 @@
+name: Tests
+
+# Every push and pull request: unit tests of geometry, nesting, toolpaths,
+# postprocessors, project migration and the rename check. No secrets needed.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: for f in main.js preload.js src/js/*.js; do node --check "$f"; done
+      - name: Unit tests
+        run: node --test "tests/*.test.js"

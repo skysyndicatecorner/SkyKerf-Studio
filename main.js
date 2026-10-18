@@ -165,6 +165,73 @@ ipcMain.handle('skykerf:log', async (_e, line) => {
   await fs.appendFile(f, String(line).slice(0, 8000) + '\n', 'utf8'); return true;
 });
 
+/* ---------- fonts: every font file on the computer, not only installed ones ---------- */
+const { parseFontNames, FONT_FILE_RE } = require('./src/js/fontname.js');
+const zlib = require('zlib'), os = require('os');
+const fontFoldersFile = () => path.join(app.getPath('userData'), 'font-folders.json');
+const fontCacheFile = () => path.join(app.getPath('userData'), 'font-cache.json');
+const knownFontFiles = new Set();
+function systemFontDirs() {
+  const h = os.homedir();
+  if (process.platform === 'win32') return [path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts'), path.join(process.env.LOCALAPPDATA || path.join(h, 'AppData', 'Local'), 'Microsoft', 'Windows', 'Fonts')];
+  if (process.platform === 'darwin') return ['/System/Library/Fonts', '/Library/Fonts', path.join(h, 'Library', 'Fonts')];
+  return ['/usr/share/fonts', '/usr/local/share/fonts', path.join(h, '.fonts'), path.join(h, '.local', 'share', 'fonts')];
+}
+function userFontDirs() { try { return JSON.parse(fss.readFileSync(fontFoldersFile(), 'utf8')).filter(d => typeof d === 'string') } catch (e) { return [] } }
+async function walkFonts(dir, out, depth) {
+  if (depth > 8 || out.length > 30000) return; let ents; try { ents = await fs.readdir(dir, { withFileTypes: true }) } catch (e) { return }
+  for (const e of ents) { const p = path.join(dir, e.name); if (e.isDirectory()) await walkFonts(p, out, depth + 1); else if (FONT_FILE_RE.test(e.name)) out.push(p) }
+}
+/* Read only the table directory and the 'name' / 'OS/2' tables of each face. */
+async function readFontFaces(p, size) {
+  if (/\.woff$/i.test(p) || size < 256 * 1024) return parseFontNames(await fs.readFile(p), { inflate: x => zlib.inflateSync(x) });
+  const fh = await fs.open(p, 'r');
+  const rd = async (off, len) => { const b = Buffer.alloc(len); await fh.read(b, 0, len, off); return b };
+  try {
+    const head = await rd(0, 12), offsets = head.toString('latin1', 0, 4) === 'ttcf' ? [] : [0];
+    if (!offsets.length) { const n = Math.min((await rd(8, 4)).readUInt32BE(0), 64), t = await rd(12, n * 4); for (let i = 0; i < n; i++) offsets.push(t.readUInt32BE(i * 4)) }
+    const faces = [];
+    for (let fi = 0; fi < offsets.length; fi++) {
+      const off = offsets[fi], nt = (await rd(off + 4, 2)).readUInt16BE(0), dir = await rd(off + 12, nt * 16), want = {};
+      for (let i = 0; i < nt; i++) { const tg = dir.toString('latin1', i * 16, i * 16 + 4); if (tg === 'name' || tg === 'OS/2') want[tg] = { o: dir.readUInt32BE(i * 16 + 8), l: dir.readUInt32BE(i * 16 + 12) } }
+      if (!want.name || want.name.l > 4e6) continue;
+      const tags = Object.keys(want), parts = []; let pos = 12 + tags.length * 16;
+      for (const tg of tags) { const b = await rd(want[tg].o, want[tg].l); parts.push({ tg, b, at: pos }); pos += b.length + ((4 - b.length % 4) % 4) }
+      const mini = Buffer.alloc(pos); mini.writeUInt32BE(0x00010000, 0); mini.writeUInt16BE(tags.length, 4);
+      parts.forEach((q, i) => { mini.write(q.tg, 12 + i * 16, 'latin1'); mini.writeUInt32BE(q.at, 12 + i * 16 + 8); mini.writeUInt32BE(q.b.length, 12 + i * 16 + 12); q.b.copy(mini, q.at) });
+      for (const f of parseFontNames(mini)) faces.push(Object.assign(f, { index: fi }));
+    }
+    return faces;
+  } finally { await fh.close() }
+}
+async function scanFonts() {
+  let cache = {}; try { cache = JSON.parse(await fs.readFile(fontCacheFile(), 'utf8')) } catch (e) { }
+  const files = [], dirs = systemFontDirs().concat(userFontDirs()), fresh = {}, faces = [];
+  for (const d of dirs) await walkFonts(d, files, 0);
+  for (const p of files) {
+    let st; try { st = await fs.stat(p) } catch (e) { continue }
+    const key = st.size + ':' + Math.round(st.mtimeMs); let ent = cache[p];
+    if (!ent || ent.key !== key) {
+      let list = [];
+      if (/\.woff2$/i.test(p)) list = [{ family: path.basename(p).replace(/\.[^.]+$/, '').replace(/[-_]+(regular|bold|italic|light|medium|black|thin).*$/i, '').replace(/[-_]+/g, ' '), style: 'Regular', weight: 400, italic: false, index: 0 }];
+      else { try { list = await readFontFaces(p, st.size) } catch (e) { list = [] } }
+      ent = { key, faces: list.map(f => ({ family: f.family, style: f.style, weight: f.weight, italic: f.italic, index: f.index || 0 })) };
+    }
+    fresh[p] = ent; knownFontFiles.add(p);
+    for (const f of ent.faces) faces.push(Object.assign({ path: p, user: !systemFontDirs().some(d => p.startsWith(d)) }, f));
+  }
+  try { await fs.writeFile(fontCacheFile(), JSON.stringify(fresh)) } catch (e) { }
+  return faces;
+}
+ipcMain.handle('skykerf:fonts', () => scanFonts());
+ipcMain.handle('skykerf:fontData', async (_e, p) => { if (typeof p !== 'string' || !knownFontFiles.has(p)) throw new Error('unknown font file'); const st = await fs.stat(p); if (st.size > 64 * 1024 * 1024) throw new Error('font too large'); return new Uint8Array(await fs.readFile(p)) });
+ipcMain.handle('skykerf:addFontFolder', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Папка со шрифтами / Font folder', properties: ['openDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return { ok: false };
+  const list = userFontDirs(); if (!list.includes(r.filePaths[0])) list.push(r.filePaths[0]); await fs.writeFile(fontFoldersFile(), JSON.stringify(list.slice(-20)));
+  return { ok: true, dir: r.filePaths[0] };
+});
+
 app.whenReady().then(async () => {
   checkRecovery();
   if (process.platform === 'win32') app.setAppUserModelId('org.kerfstudio.app'); // kept from 0.2 so updates replace the old install

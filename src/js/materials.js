@@ -65,8 +65,13 @@ function resolveLaser(L, sheet, machine) {
   if (!own && m.laser.ref && m.laser.ref !== machine.id) out.warn.push(T(`Параметры «${L10(m.name)}» записаны для профиля «${m.laser.ref}», а не для «${machine.name}». Проверьте тестом материала.`, `“${L10(m.name)}” values were written for profile “${m.laser.ref}”, not “${machine.name}”. Verify with a material test.`));
   if (sheet && Math.abs((sheet.thick || m.thick) - m.thick) > .01 && L.type === 'cut') out.warn.push(T(`Толщина листа ${sheet.thick} мм отличается от профиля (${m.thick} мм) — число проходов не пересчитывается автоматически.`, `Sheet thickness ${sheet.thick} mm differs from the profile (${m.thick} mm) — passes are not adjusted automatically.`));
   if (m.status !== 'verified') out.unverified = true;
+  applyOwn(out, L.ovr, man);
   return out;
 }
+/* "From material" mode with personal corrections: any value the user typed over
+   the material value is kept (L.ovr / L.ovrC = { key: true }). */
+const LASER_OWN_KEYS = ['power', 'minPower', 'speed', 'passes', 'interval', 'kerf'], CNC_OWN_KEYS = ['rpm', 'feed', 'plunge', 'step', 'depth'];
+function applyOwn(out, ovr, man) { out.own = []; if (!ovr) return; for (const k in ovr) if (ovr[k] && man[k] != null) { out[k] = man[k]; out.own.push(k) } }
 
 /* ---------- CNC tool library (spec 10.2) ---------- */
 const BUILTIN_TOOLS = [
@@ -95,7 +100,8 @@ function resolveCnc(L, sheet) {
     out.rpm = Math.min(m.cnc.rpm, S.machine.rpmMax || m.cnc.rpm); out.feed = Math.min(cncFeed(tool, m, out.rpm), S.machine.maxFeed || 1e9); out.plunge = Math.round(out.feed * .35);
     out.step = fx(Math.max(.1, tool.d * m.cnc.doc), 2); out.src = 'material';
     if (c.op === 'out' || c.op === 'in') out.depth = fx((sheet.thick || m.thick) + .2, 2);
-  }
+    applyOwn(out, L.ovrC, c);
+  } else out.own = [];
   if (out.depth > (tool.maxDepth || 99)) out.warn.push(T(`Глубина ${out.depth} мм больше рабочей длины фрезы (${tool.maxDepth} мм).`, `Depth ${out.depth} mm exceeds the tool's cutting length (${tool.maxDepth} mm).`));
   if (c.op === 'vcarve' || c.op === 'chamfer') { if (tool.type !== 'v') out.warn.push(T('Для V-резьбы и фаски нужна V-фреза.', 'V-carve and chamfer need a V-bit.')); out.vangle = tool.angle || c.vangle }
   return out;

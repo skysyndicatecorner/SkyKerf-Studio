@@ -144,7 +144,16 @@ function plateAtWorld(w) { const pw = S.machine.w + plateGap(), i = Math.floor((
 /* After moving: shapes dropped inside a sheet stop being "unplaced". */
 function settleParked(ids) { for (const id of ids) { const s = shapeById(id); if (!s || !s.parked) continue; const b = bboxOf(s.paths), pl = plateOfBox(b), r = sheetRectWorld(pl); if (b[0] >= r[0] - .5 && b[2] <= r[2] + .5 && b[1] >= r[1] - .5 && b[3] <= r[3] + .5) delete s.parked } }
 
-cv.addEventListener('contextmenu', e => e.preventDefault());
+/* The menu opens on the "contextmenu" event: on Windows it fires after the button is
+   released, on macOS/Linux when it is pressed. Opening it from pointerup put the menu
+   under the cursor right before Windows delivered contextmenu to it, so the browser's own
+   menu covered ours and swallowed the next click. */
+cv.addEventListener('contextmenu', e => {
+  e.preventDefault(); if (tab !== 'cad') return;
+  if (drag && drag.k === 'pan' && drag.moved) return;
+  const [px, py] = evtPos(e); openCtxMenu(e.clientX + 2, e.clientY + 2, s2w(px, py));
+});
+document.addEventListener('contextmenu', e => { if (!e.target.closest('input, textarea, [contenteditable="true"]')) e.preventDefault() });
 cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId); const [px, py] = evtPos(e), w = s2w(px, py); hideCtx();
   if (tab === 'gcode' && P.mode === '3d') { drag = { k: 'orbit', px, py, yaw: P.yaw, pitch: P.pitch, pan: e.button === 2 || e.shiftKey, panX: P.panX, panY: P.panY }; return }
@@ -182,7 +191,7 @@ cv.addEventListener('pointermove', e => {
   }
   const d = drag;
   if (d.k === 'orbit') { if (d.pan) { P.panX = d.panX + (px - d.px); P.panY = d.panY + (py - d.py) } else { P.yaw = d.yaw + (px - d.px) * .008; P.pitch = clamp(d.pitch + (py - d.py) * .006, 0, 1.5) } draw(); return }
-  if (d.k === 'pan') { if (Math.hypot(px - d.px, py - d.py) > 3) d.moved = true; V.ox = d.ox + (px - d.px); V.oy = d.oy + (py - d.py); draw(); return }
+  if (d.k === 'pan') { if (Math.hypot(px - d.px, py - d.py) > 3) { if (!d.moved && d.ctx) hideCtx(); d.moved = true } V.ox = d.ox + (px - d.px); V.oy = d.oy + (py - d.py); draw(); return }
   if (d.k === 'measure') { measure.b = e.shiftKey ? (() => { const dx = w[0] - measure.a[0], dy = w[1] - measure.a[1], r = Math.hypot(dx, dy), a = Math.round(Math.atan2(dy, dx) / (Math.PI / 12)) * (Math.PI / 12); return [measure.a[0] + r * Math.cos(a), measure.a[1] + r * Math.sin(a)] })() : snapP(w); draw(); return }
   if (d.k === 'move') { const b = d.box; let dx = w[0] - d.start[0], dy = w[1] - d.start[1]; dx = snapV(b[0] + dx) - b[0]; dy = snapV(b[1] + dy) - b[1]; if (Math.abs(dx) + Math.abs(dy) > 0) d.moved = true; applyFromOrig(d.orig, (x, y) => [x + dx, y + dy]); draw(); return }
   if (d.k === 'scale') {
@@ -203,7 +212,7 @@ cv.addEventListener('pointermove', e => {
 });
 cv.addEventListener('pointerup', e => {
   const d = drag; drag = null; if (!d) return; cv.style.cursor = '';
-  if (d.k === 'pan' && d.ctx && !d.moved) { openCtxMenu(d.cx, d.cy, d.w); return }
+  if (d.k === 'pan' && d.ctx) { if (d.moved) hideCtx(); return }
   if (d.undo && !d.moved) dropLastUndo();
   if (d.k === 'rot' && d.moved) for (const id of d.orig.keys()) { const s = shapeById(id); if (s && s.kind === 'text') s.rot = ((s.rot || 0) + d.ang * 180 / Math.PI) % 360 }
   if (d.k === 'scale' && d.moved) for (const id of d.orig.keys()) { const s = shapeById(id); if (s && s.kind === 'text') s.size = fx(s.size * Math.abs(d.sy || 1), 2) }

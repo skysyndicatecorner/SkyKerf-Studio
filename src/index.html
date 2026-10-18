@@ -53,24 +53,31 @@
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 <div class="busy" id="busy" hidden><div><i></i><span id="busyT"></span></div></div>
 <div class="drop" id="drop" hidden><div><svg width="40" height="40" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M10 3v10M6.5 9.5L10 13l3.5-3.5"/><path d="M4 13v3.5h12V13"/></svg><b>Drop files · Перетащите файлы</b><small>SVG · DXF · PNG · JPEG · BMP · WebP · TIFF · STL · OBJ · G-code · .kerf</small></div></div>
-<input type="file" id="fileAny" accept=".svg,.dxf,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff,.stl,.obj,.nc,.gcode,.gc,.ngc,.tap,.kerf,.skykerf,.json,.pdf" hidden>
+<input type="file" id="fileAny" accept=".svg,.dxf,.png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff,.stl,.obj,.nc,.gcode,.gc,.ngc,.tap,.kerf,.skykerf,.json,.pdf,.ai,.cdr,.plt,.hpgl,.hpg,.lbrn,.lbrn2,.svgz,.eps" hidden>
 <input type="file" id="fileProj" accept=".kerf,.skykerf,.json" hidden>
 <input type="file" id="fileImg" accept="image/*,.tif,.tiff" hidden>
 <input type="file" id="fileGc" accept=".nc,.gcode,.gc,.ngc,.tap,.txt" hidden>
 <input type="file" id="file3d" accept=".stl,.obj" hidden>
 <input type="file" id="fileGenImg" accept="image/*,.tif,.tiff" hidden>
 <input type="file" id="fileMat" accept=".json" hidden>
+<input type="file" id="fileFont" accept=".ttf,.otf,.ttc,.woff,.woff2" hidden>
 
 <script src="js/core.js"></script>
 <script src="js/geom.js"></script>
 <script src="js/materials.js"></script>
+<script src="js/fontname.js"></script>
 <script src="js/text.js"></script>
 <script src="js/nest.js"></script>
 <script src="js/cam.js"></script>
 <script src="js/post.js"></script>
+<script src="js/cdr.js"></script>
+<script src="js/vecformats.js"></script>
 <script src="js/imports.js"></script>
 <script src="js/cad.js"></script>
+<script src="js/decor.js"></script>
 <script src="js/gen.js"></script>
+<script src="js/houses.js"></script>
+<script src="js/decorgen.js"></script>
 <script src="js/slicer.js"></script>
 <script src="js/relief.js"></script>
 <script src="js/devices.js"></script>

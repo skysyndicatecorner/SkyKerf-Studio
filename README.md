@@ -12,6 +12,18 @@
 
 ![SkyKerf_Studio](build/icon.png)
 
+## Что нового в 0.3.1
+
+- **Домики:** 14 стилей (деревенский, русская изба, японский чайный, современный, A-фрейм, фахверк, готика, голландский пряничный, сказочный, новогодний, крепость, башня, амбар, sci-fi) × 8 назначений (декор, чайный домик, шкатулка, органайзер, копилка, скворечник, кормушка, светильник); два назначения можно совместить. Каждую деталь можно поменять: крыша (двускатная, мансардная, вальмовая, односкатная, плоская, зубцы), фронтон (треугольный, ступенчатый, фигурный), кровля, резные карнизы и причелины, украшение конька, труба, отделка стен, узоры, окна (10 форм × 8 переплётов), ставни и наличники, двери, двор с заборчиком.
+- **Рамки и таблички:** 18 форм рамки и 16 форм окна, коллажи (ряды × столбцы), 15 узоров по краю, уголки, мотивы, украшение сверху, надписи сверху и снизу любым шрифтом, фото «в карман» или «в щель сверху», подставка, петля, отверстия или магниты.
+- **Импорт:** CorelDRAW CDR (версии 6–X8 и новее, в том числе сжатые), PDF и PDF-совместимый AI, HPGL/PLT, LightBurn LBRN/LBRN2, SVGZ; SVG открывается в десятки раз быстрее.
+- **Проходы и свои значения в авто-режиме:** количество проходов, интервал заливки и другие параметры можно задать самому поверх профиля материала — у таких полей появляется метка «своё» и кнопка возврата.
+- **Шрифты с компьютера:** программа находит все шрифты, установленные в системе и у пользователя, плюс папки, которые вы добавите; поиск, фильтр и предпросмотр.
+- **Значок станка:** функции только для лазера или только для фрезера помечены значком; нажатие предлагает переключиться на подходящий станок.
+- **Исправлено:** контекстное меню холста (кнопки снова работают в Windows), тест мощности (сетка мощность × скорость или мощность × проходы).
+
+Подробности — [CHANGELOG.md](CHANGELOG.md), форматы — [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md).
+
 ## Что нового в 0.3
 
 - **Стабильность:** история изменений с понятными названиями шагов, горячие клавиши на любой раскладке (Ctrl+Z работает и на русской), автосохранение и восстановление после аварийного закрытия, локальный журнал ошибок, списки без ограничения длины.
@@ -64,6 +76,7 @@ npm run dist:linux   # Linux → dist/*.AppImage, dist/*.deb
 | [docs/AUDIT.md](docs/AUDIT.md) | Аудит версии 0.2: найденные проблемы и что исправлено |
 | [docs/POSTPROCESSORS.md](docs/POSTPROCESSORS.md) | Постпроцессоры, проверка кода, как испытать профиль на станке |
 | [docs/MATERIALS.md](docs/MATERIALS.md) | Библиотека материалов, статусы, калибровка |
+| [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md) | Форматы импорта и что проверено |
 | [docs/HOTKEYS.md](docs/HOTKEYS.md) | Горячие клавиши |
 | [docs/TESTING.md](docs/TESTING.md) | Автотесты и ручные сценарии приёмки |
 | [SECURITY.md](SECURITY.md) | Безопасность ПО и работы со станком |
@@ -76,13 +89,19 @@ src/index.html, app.css интерфейс
 src/js/core.js          модель проекта (формат 3), история, миграция, общие элементы
 src/js/geom.js          геометрия, смещения, булевы операции, проверки
 src/js/materials.js     материалы, профили процессов, фрезы
+src/js/fontname.js      имена шрифтов из файлов TTF/OTF/TTC/WOFF
 src/js/text.js          шрифты и текст
 src/js/nest.js          раскладка, варианты, проверка геометрии
 src/js/cam.js           траектории лазера и фрезера, симуляция G-code
 src/js/post.js          постпроцессоры, проверка кода, экспорт
+src/js/cdr.js           чтение CorelDRAW CDR
+src/js/vecformats.js    чтение PDF/AI, HPGL/PLT, LightBurn
 src/js/imports.js       импорт файлов, фото, трассировка
 src/js/cad.js           холст, листы, инструменты, контекстное меню
-src/js/gen.js           генераторы (строения, коробки, тесты…)
+src/js/decor.js         формы, узоры, мотивы, текстуры для генераторов
+src/js/gen.js           генераторы (коробки, пазлы, тесты…)
+src/js/houses.js        генератор домиков: стиль × назначение
+src/js/decorgen.js      рамки для фото и таблички
 src/js/slicer.js        3D-модель → слои
 src/js/relief.js        3D-рельеф для фрезера
 src/js/devices.js       подключение станка, определение контроллера
@@ -104,6 +123,7 @@ tests/                  модульные тесты (node --test)
 
 **SkyKerf_Studio** (formerly Kerf Studio) is an MIT-licensed CAD/CAM app for laser engravers/cutters and CNC routers: drawing on real sheets with no-go zones, one shared nesting engine (one sheet / several sheets / current sheet / manual, with reports and saved variants), postprocessor-based G-code export with validation and production packages, explicit laser process types and kerf compensation, a material library with verification statuses and per-machine values, drag-and-drop import (SVG, DXF, PNG, JPEG, BMP, WebP, TIFF, STL, OBJ, G-code) with colour tracing, system fonts and text on an arc, parametric buildings and boxes with fit profiles, 3D relief for routers, and GRBL machine control with read-only controller detection.
 
+- **New in 0.3.1:** a house generator with 14 styles × 8 uses (tea house, box, organizer, piggy bank, birdhouse, feeder, lantern; two can be combined) and every detail adjustable; photo frames and signs with many shapes, borders, corners and any installed font; import of CorelDRAW CDR (v6–X8+), PDF / PDF-compatible AI, HPGL/PLT, LightBurn and SVGZ (see [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md)); passes and other values can be overridden in auto mode; all fonts on the computer; laser-only / router-only badges; fixed context menu on Windows and the power test.
 - **Download:** Releases — Windows installer/portable `.exe`, Linux `.AppImage`/`.deb`.
 - **Build on GitHub:** see [docs/BUILD_GITHUB.ru.md](docs/BUILD_GITHUB.ru.md) (Russian) — in short: Actions → *Build desktop* → *Run workflow*, or publish a Release.
 - **Build locally:** Node.js 22+, `npm install`, `npm test`, `npm start`, `npm run dist:win` / `npm run dist:linux`.

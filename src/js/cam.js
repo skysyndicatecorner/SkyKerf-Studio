@@ -76,17 +76,18 @@ function planJob(plate) {
       for (const w of r.warn) warn.push(`${layerName(L)}: ${w}`);
       if (r.unsupported) continue;
       const pwMax = clamp(r.power, 0, 100) / 100, spd = Math.max(1, r.speed), groups = new Map();
-      for (const s of ls) { const k = s.ov ? `${s.ov.power}|${s.ov.speed}` : '_'; (groups.get(k) || groups.set(k, []).get(k)).push(s) }
+      for (const s of ls) { const k = s.ov ? `${s.ov.power}|${s.ov.speed}|${s.ov.passes || ''}|${s.ov.interval || ''}` : '_'; (groups.get(k) || groups.set(k, []).get(k)).push(s) }
       for (const [k, list] of groups) {
-        const P = k === '_' ? pwMax : clamp(list[0].ov.power, 0, 100) / 100, F = k === '_' ? spd : Math.max(1, list[0].ov.speed);
+        const ov = k === '_' ? null : list[0].ov, P = !ov ? pwMax : clamp(ov.power, 0, 100) / 100, F = !ov ? spd : Math.max(1, ov.speed);
+        const NP = Math.max(1, (ov && ov.passes) | 0 || r.passes | 0), IV = ov && ov.interval > 0 ? ov.interval : r.interval;
         const vec = list.filter(s => s.kind !== 'image'), imgs = list.filter(s => s.kind === 'image');
-        for (let pass = 0; pass < Math.max(1, r.passes | 0); pass++) {
-          for (const s of imgs) planRaster(s, Object.assign({}, l, r), P, F, add, warn);
+        for (let pass = 0; pass < NP; pass++) {
+          for (const s of imgs) planRaster(s, Object.assign({}, l, r, { interval: IV }), P, F, add, warn);
           if (L.type === 'fill' || L.type === 'raster') {
             const closed = vec.filter(s => s.closed).flatMap(s => s.paths);
             if (!closed.length && vec.length && !pass) warn.push(T(`Слой «${layerName(L)}»: заливка возможна только для замкнутых фигур.`, `Layer “${layerName(L)}”: fill needs closed shapes.`));
             const os = l.overscan || 0;
-            for (const [a, b] of hatch(closed, Math.max(.02, r.interval), l.angle)) {
+            for (const [a, b] of hatch(closed, Math.max(.02, IV), l.angle)) {
               const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1, ux = dx / len * os, uy = dy / len * os;
               add({ g: 0, x: a[0] - ux, y: a[1] - uy }); if (os) add({ g: 1, x: a[0], y: a[1], f: F, p: 0 }); add({ g: 1, x: b[0], y: b[1], f: F, p: P }); if (os) add({ g: 1, x: b[0] + ux, y: b[1] + uy, f: F, p: 0 });
             }

@@ -5,7 +5,7 @@
    named undo/redo history, serialization + migration, assets, dialogs
    ============================================================================ */
 const APP_NAME = 'SkyKerf_Studio';
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.1';
 const FORMAT_VERSION = 3;
 
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];

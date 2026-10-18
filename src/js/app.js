@@ -56,11 +56,11 @@ async function doAct(act, v, a, e) {
     case 'layoutRestore': restoreLayout(+v); break;
     case 'layoutDel': pushUndo(T('Удаление варианта', 'Delete variant')); S.layouts.splice(+v, 1); changed(); break;
     /* ---- wizards & imports ---- */
-    case 'wiz': if (!$('#modal').hidden) closeModal(); if (v === 'slicer') openSlicer(); else if (v === 'relief') { pendingImgAction = 'relief'; $('#fileImg').click() } else openGen(v); break;
+    case 'wiz': if (!needMachine(wizNeeds(v), wizName(v)[0])) break; if (!$('#modal').hidden) closeModal(); if (v === 'slicer') openSlicer(); else if (v === 'relief') { pendingImgAction = 'relief'; $('#fileImg').click() } else openGen(v); break;
     case 'imgRaster': closeModal(); addRasterImage(pendingImg); break;
     case 'imgTrace': closeModal(); openTrace(pendingImg); break;
     case 'imgLayered': { const im = pendingImg; closeModal(); openGen('layered', { imgAsset: imageToAsset(im).id }); break }
-    case 'imgRelief': { const im = pendingImg; closeModal(); openRelief(im); break }
+    case 'imgRelief': { if (!needMachine('cnc', T('3D-рельеф', '3D relief'))) break; const im = pendingImg; closeModal(); openRelief(im); break }
     case 'imgTraceSel': { const s = selShapes()[0]; if (!s || !s.img) break; const im = imgEl(s.img.asset); if (!im.complete) await new Promise(r => { im.onload = r; im.onerror = r }); openTrace(im, { width: fx(bboxOf(s.paths)[2] - bboxOf(s.paths)[0], 1) }); break }
     case 'imgBands': bandsDialog(); break;
     case 'trMode': if (TR) { TR.mode = v; renderTraceSide(); traceRun() } break;
@@ -101,6 +101,7 @@ async function doAct(act, v, a, e) {
     case 'orderMode': if (S.orderMode === v) break; pushUndo(T('Режим порядка', 'Order mode')); if (v === 'manual') { const cur = camLayers().map(L => L.id); S.order = cur.concat(S.order.filter(i => !cur.includes(i))) } S.orderMode = v; changed(); break;
     case 'layerAuto': { const L = S.layers[camSel]; if (!L || L.auto) break; pushUndo(T('Параметры из материала', 'Values from material')); L.auto = true; changed(); break }
     case 'layerManual': { const L = S.layers[camSel]; if (!L || !L.auto) break; pushUndo(T('Ручные параметры', 'Manual values')); if (isLaser()) { const r = resolveLaser(L, sheetAt(curPlate)); Object.assign(L.laser, { power: r.power, minPower: r.minPower, speed: r.speed, passes: r.passes, interval: r.interval, kerf: r.kerf }) } else { const r = resolveCnc(L, sheetAt(curPlate)); Object.assign(L.cnc, { rpm: r.rpm, feed: r.feed, plunge: r.plunge, step: r.step, depth: r.depth }) } L.auto = false; changed(); break }
+    case 'ovrReset': { const L = S.layers[camSel]; if (!L) break; pushUndo(T('Значение материала', 'Material value')); if (isLaser()) { L.ovr = Object.assign({}, L.ovr); delete L.ovr[v] } else { L.ovrC = Object.assign({}, L.ovrC); delete L.ovrC[v] } changed(); break }
     case 'layerToMat': { const L = S.layers[camSel]; if (L) layerToMaterial(L); break }
     case 'issue': { const x = GEO.issues[+v]; if (!x) break; sel = new Set(x.ids.filter(id => shapeById(id))); switchTab('cad'); const b = selBox(); if (b) { fitBox(b, 120); draw() } refresh(); break }
     case 'removeDups': { const x = GEO.issues.find(i => i.dup); if (x) removeDuplicates(x.dup); break }
@@ -121,7 +122,10 @@ async function doAct(act, v, a, e) {
     case 'exPl': if (EX) { EX.plates = v; renderExport() } break;
     case 'postEdit': if (EX) { const id = EX.post; closeModal(); openPostEditor(id) } break;
     case 'exSave': exportSave(); break;
-    case 'offerDl': case 'offerCopy': offerAction(act, v); break; case 'exCopy': exportCopy(); break;
+    case 'offerDl': case 'offerCopy': offerAction(act, v); break;
+    case 'fpFilter': case 'fpPick': case 'fpOk': case 'fpFile': case 'fpFolder': fontPickerAction(act, v); break;
+    case 'fontPick': { const p = a.dataset.p; let cur = p === 'data-topt' ? toolOpt.font : p === 'data-txt' ? (selShapes()[0] || {}).font : GS ? GS.o[p.slice(3)] : 'plex';
+      openFontPicker(cur, f => { if (p === 'data-topt') { toolOpt.font = f; toolOpt.weight = defaultWeight(f); renderRight() } else if (p === 'data-txt') { const s = selShapes()[0]; if (s && s.kind === 'text') updateText(Object.assign(textSpec(s), { font: f, weight: defaultWeight(f) })) } else if (GS) { GS.o[p.slice(3)] = f; renderGenSide(); genRegen() } }); break } case 'exCopy': exportCopy(); break;
     case 'exOpenFolder': if (EX && EX.saved && DESK && DESK.showItemInFolder) DESK.showItemInFolder(EX.saved); break;
     /* ---- machine ---- */
     case 'mcMode': if (MC.connected && v !== 'serial') await serialDisconnect(); MC.mode = v; setState(v === 'demo' ? 'demo' : 'offline'); refresh(); break;
@@ -169,8 +173,8 @@ function onChange(t) {
   if (t.id === 'shPreset' && t.value !== '') { const sh = sheetAt(curPlate); pushUndo(T('Формат листа', 'Sheet format')); if (t.value === 'bed') { sh.x = 0; sh.y = 0; sh.w = S.machine.w; sh.h = S.machine.h } else { const p = SHEET_PRESETS[+t.value]; sh.w = Math.min(p[1], S.machine.w); sh.h = Math.min(p[2], S.machine.h); sh.x = clamp(sh.x, 0, S.machine.w - sh.w); sh.y = clamp(sh.y, 0, S.machine.h - sh.h) } changed(); return }
   if (d.img) { const s = selShapes()[0]; if (!s || !s.img) return; const k = d.img; pushUndo(T('Параметры фото', 'Photo settings'), 'img' + k + s.id); s.img[k] = t.type === 'checkbox' ? t.checked : t.tagName === 'SELECT' ? t.value : (numVal(t) ?? s.img[k]); changed(); return }
   if (d.crop) { const s = selShapes()[0]; if (!s || !s.img) return; pushUndo(T('Обрезка фото', 'Crop photo'), 'crop' + s.id); s.img.crop = Object.assign({ l: 0, t: 0, r: 0, b: 0 }, s.img.crop); s.img.crop[d.crop] = clamp((numVal(t) || 0) / 100, 0, .45); changed(); return }
-  if (t.id === 'ovChk') { pushUndo(T('Свои параметры объекта', 'Object override')); for (const s of selShapes()) { if (t.checked) s.ov = s.ov || { power: resolveLaser(S.layers[s.layer], sheetAt(plateOf(s))).power, speed: resolveLaser(S.layers[s.layer], sheetAt(plateOf(s))).speed }; else delete s.ov } changed(); return }
-  if (d.ov) { const v = numVal(t); if (v == null) return; pushUndo(T('Свои параметры объекта', 'Object override'), 'ov' + d.ov); for (const s of selShapes()) if (s.ov) s.ov[d.ov] = d.ov === 'power' ? clamp(v, 0, 100) : Math.max(1, v); changed(); return }
+  if (t.id === 'ovChk') { pushUndo(T('Свои параметры объекта', 'Object override')); for (const s of selShapes()) { if (t.checked) { const r = resolveLaser(S.layers[s.layer], sheetAt(plateOf(s))); s.ov = s.ov || { power: r.power, speed: r.speed, passes: r.passes } } else delete s.ov } changed(); return }
+  if (d.ov) { const v = numVal(t); if (v == null) return; pushUndo(T('Свои параметры объекта', 'Object override'), 'ov' + d.ov); for (const s of selShapes()) if (s.ov) s.ov[d.ov] = d.ov === 'power' ? clamp(v, 0, 100) : d.ov === 'passes' ? clamp(Math.round(v), 1, 50) : d.ov === 'interval' ? clamp(v, .02, 2) : Math.max(1, v); changed(); return }
   if (d.k && camSel != null) {
     const L = S.layers[camSel];
     if (d.k === 'type') { pushUndo(T('Тип процесса', 'Process type')); L.type = t.value; changed(); return }
@@ -179,6 +183,7 @@ function onChange(t) {
     if (g === 'cnc' && k === 'toolId') { const tl = toolById(v); if (tl.type === 'v' && !['vcarve', 'chamfer', 'engrave'].includes(L.cnc.op)) toast(T('Выбрана V-фреза: подходит для V-резьбы, фаски и гравировки.', 'A V-bit is selected: use it for V-carve, chamfer or engraving.')) }
     changed(); return;
   }
+  if ((d.ko || d.kc) && camSel != null) { const L = S.layers[camSel], v = numVal(t); if (v == null) { renderRight(); return } pushUndo(T('Своё значение операции', 'Own operation value'), 'ko' + camSel + (d.ko || d.kc)); if (d.ko) { L.laser[d.ko] = v; L.ovr = Object.assign({}, L.ovr, { [d.ko]: true }) } else { L.cnc[d.kc] = v; L.ovrC = Object.assign({}, L.ovrC, { [d.kc]: true }) } changed(); return }
   if (d.kb && camSel != null) { const [g, k] = d.kb.split('.'); pushUndo(T('Параметр операции', 'Operation setting')); S.layers[camSel][g][k] = t.checked; changed(); return }
   if (t.id === 'layerName' && camSel != null) { pushUndo(T('Название операции', 'Operation name')); S.layers[camSel].name = t.value.trim(); changed(); return }
   if (t.id === 'camPlate') { setPlate(+t.value); return }
@@ -187,7 +192,7 @@ function onChange(t) {
   if (t.id === 'fovR') { setFeedOverride(+t.value); return }
   if (t.id === 'mType') { readSettings(); const base = MACHINES.find(x => x.type === t.value); draftM = Object.assign(deepCopy(base), { name: draftM.name, w: draftM.w, h: draftM.h, id: draftM.id }); renderSettings(); return }
   if (t.id === 'npMat') { NP.mat = t.value; NP.thick = matById(t.value).thick; readNP(); NP.thick = matById(t.value).thick; renderNewProject(); return }
-  if (d.gf && GS) { const f = GS.g.fields.find(f => f.k === d.gf); if (!f) return; GS.o[f.k] = f.t === 'chk' ? t.checked : f.t === 'num' ? (numVal(t) ?? GS.o[f.k]) : t.value; if (f.preset && GS.g.presets && GS.g.presets[t.value]) Object.assign(GS.o, GS.g.presets[t.value]); if (f.t === 'chk' || f.t === 'sel' || f.preset) renderGenSide(); genRegen(); return }
+  if (d.gf && GS) { const f = GS.g.fields.find(f => f.k === d.gf); if (!f) return; GS.o[f.k] = f.t === 'chk' ? t.checked : f.t === 'num' ? (numVal(t) ?? GS.o[f.k]) : t.value; if (f.preset && GS.g.presets && GS.g.presets[t.value]) Object.assign(GS.o, GS.g.presets[t.value]); if (f.apply) Object.assign(GS.o, f.apply(t.value) || {}); if (f.t === 'chk' || f.t === 'sel' || f.preset) renderGenSide(); genRegen(); return }
   if (d.sl) { slSet(d.sl, t.type === 'checkbox' ? t.checked : t.value); return }
   if (d.tr && TR) { const k = d.tr; TR[k] = t.type === 'checkbox' ? t.checked : t.tagName === 'SELECT' ? +t.value : (numVal(t) ?? TR[k]); if (k === 'multiLayer') renderTraceSide(); traceRun(); return }
   if (d.rl && RL) { const k = d.rl, r = RL.rel; if (t.type === 'checkbox') r[k] = t.checked; else if (t.tagName === 'SELECT') r[k] = t.value; else { const v = numVal(t); if (v == null) return; if (k === 'w') { r.h = fx(r.h * v / r.w, 1) } if (k === 'h') { r.w = fx(r.w * v / r.h, 1) } r[k] = v } if (k === 'w' || k === 'h') renderReliefSide(); reliefPreview(); return }
@@ -216,6 +221,7 @@ pickFile('#fileImg', async f => { const im = await fileToImage(f), act = pending
 pickFile('#fileGenImg', async f => { if (!GS) return; const im = await fileToImage(f); GS.o.imgAsset = imageToAsset(im).id; renderGenSide(); genRegen() });
 pickFile('#file3d', f => slLoadFile(f));
 pickFile('#fileGc', async f => { const text = await f.text(); loadGcode(text, f.name); P.report = validateGcode(text, currentPost(), S.machine, {}); P.job = null; P.t = 0; P.playing = false; fitPlate(0); refresh(); toast(T(`Открыт ${f.name}: ${P.lines.length} строк. Файл проверен по профилю «${postLabel(currentPost())}».`, `Opened ${f.name}: ${P.lines.length} lines, checked against “${postLabel(currentPost())}”.`)) });
+pickFile('#fileFont', async f => { const fam = await addUserFont(f); toast(T(`Шрифт «${fam}» загружен и сохранён в вашей библиотеке шрифтов.`, `Font “${fam}” loaded and kept in your font library.`)); if (FP) { FP.sel = fam; FP.filter = 'user'; $$('#fpFilter button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === 'user')); fpBuild(); fpPreview() } });
 pickFile('#fileMat', async f => { const n = importMaterials(await f.text()); renderMatList(); toast(T(`Импортировано материалов: ${n}. Их статус — «не проверено» или «пользовательский».`, `Imported ${n} materials. Their status is “unverified” or “user”.`)) });
 
 /* drag-and-drop anywhere (spec 7.1) */

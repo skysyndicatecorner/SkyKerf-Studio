@@ -6,7 +6,10 @@
    tracing (threshold or colour segmentation) with re-trace from the original.
    ============================================================================ */
 const RASTER_EXT = /\.(png|jpe?g|bmp|gif|webp|tiff?)$/i, VECTOR_EXT = /\.(svg|dxf)$/i, MODEL_EXT = /\.(stl|obj)$/i, GCODE_EXT = /\.(nc|gcode|gc|ngc|tap)$/i, PROJECT_EXT = /\.(kerf|skykerf|json)$/i;
-const SUPPORTED_FORMATS = () => T('Проект: .kerf · Векторы: SVG, DXF · Изображения: PNG, JPEG, BMP, GIF, WebP, TIFF · 3D: STL, OBJ · G-code: .nc .gcode .ngc .tap .gc. PDF пока не поддерживается — сохраните его как SVG.', 'Project: .kerf · Vectors: SVG, DXF · Images: PNG, JPEG, BMP, GIF, WebP, TIFF · 3D: STL, OBJ · G-code: .nc .gcode .ngc .tap .gc. PDF is not supported yet — save it as SVG.');
+const MORE_VEC_EXT = /\.(cdr|pdf|ai|plt|hpgl|hpg|lbrn2?|svgz|eps)$/i;
+const SUPPORTED_FORMATS = () => T('Проект: .kerf · Векторы: SVG, SVGZ, DXF, CorelDRAW CDR (версии 6–X8 и новее), PDF, Adobe Illustrator AI (совместимый с PDF), HPGL/PLT, LightBurn LBRN/LBRN2 · Изображения: PNG, JPEG, BMP, GIF, WebP, TIFF · 3D: STL, OBJ · G-code: .nc .gcode .ngc .tap .gc.', 'Project: .kerf · Vectors: SVG, SVGZ, DXF, CorelDRAW CDR (versions 6–X8 and newer), PDF, Adobe Illustrator AI (PDF-compatible), HPGL/PLT, LightBurn LBRN/LBRN2 · Images: PNG, JPEG, BMP, GIF, WebP, TIFF · 3D: STL, OBJ · G-code: .nc .gcode .ngc .tap .gc.');
+/* decompression through the browser's own zlib (no extra libraries) */
+async function inflateBytes(u8, kind) { const ds = new DecompressionStream(kind || 'deflate'); const st = new Blob([u8]).stream().pipeThrough(ds); return new Uint8Array(await new Response(st).arrayBuffer()) }
 
 /* ---------------- images ---------------- */
 const IMGS = new Map();
@@ -100,6 +103,60 @@ function splitImageBands(s, n) {
 }
 
 /* ---------------- vector import ---------------- */
+/* SVG path data → polylines (user units); curves flattened to ~tol */
+function svgPathPolys(d, tol) {
+  const toks = String(d).match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g) || [], out = [];
+  let i = 0, cmd = '', x = 0, y = 0, sx = 0, sy = 0, cpx = 0, cpy = 0, prev = '', cur = null;
+  const num = () => +toks[i++], isNum = () => i < toks.length && !/^[a-zA-Z]$/.test(toks[i]);
+  const flag = () => { // arc flags may be written without separators ("a1 1 0 01 10 10")
+    const t = toks[i]; if (t.length > 1 && (t[0] === '0' || t[0] === '1') && !t.includes('.')) { toks[i] = t.slice(1); return +t[0] } i++; return +t };
+  const start = () => { cur = { pts: [[x, y]], closed: false }; out.push(cur) };
+  const seg = (n, f) => { for (let k = 1; k <= n; k++) cur.pts.push(f(k / n)) };
+  const nOf = L => Math.max(2, Math.min(200, Math.ceil(L / Math.max(tol, 1e-6) / 4)));
+  const cubicTo = (x1, y1, x2, y2, ex, ey) => { const L = Math.hypot(x1 - x, y1 - y) + Math.hypot(x2 - x1, y2 - y1) + Math.hypot(ex - x2, ey - y2), x0 = x, y0 = y; seg(nOf(L), t => { const u = 1 - t; return [u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * ex, u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * ey] }); cpx = x2; cpy = y2; x = ex; y = ey };
+  const quadTo = (x1, y1, ex, ey) => { const L = Math.hypot(x1 - x, y1 - y) + Math.hypot(ex - x1, ey - y1), x0 = x, y0 = y; seg(nOf(L), t => { const u = 1 - t; return [u * u * x0 + 2 * u * t * x1 + t * t * ex, u * u * y0 + 2 * u * t * y1 + t * t * ey] }); cpx = x1; cpy = y1; x = ex; y = ey };
+  const arcTo = (rx, ry, phi, fa, fs, ex, ey) => {
+    rx = Math.abs(rx); ry = Math.abs(ry); if (!rx || !ry) { cur.pts.push([ex, ey]); x = ex; y = ey; return }
+    const c = Math.cos(phi * Math.PI / 180), s2 = Math.sin(phi * Math.PI / 180), dx = (x - ex) / 2, dy = (y - ey) / 2, x1 = c * dx + s2 * dy, y1 = -s2 * dx + c * dy;
+    let lam = x1 * x1 / (rx * rx) + y1 * y1 / (ry * ry); if (lam > 1) { rx *= Math.sqrt(lam); ry *= Math.sqrt(lam) }
+    const sg = fa === fs ? -1 : 1, num2 = rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1, co = sg * Math.sqrt(Math.max(0, num2 / (rx * rx * y1 * y1 + ry * ry * x1 * x1))), cx1 = co * rx * y1 / ry, cy1 = -co * ry * x1 / rx;
+    const cx = c * cx1 - s2 * cy1 + (x + ex) / 2, cy = s2 * cx1 + c * cy1 + (y + ey) / 2, ang = (ux, uy, vx, vy) => { const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy); return a };
+    const t1 = ang(1, 0, (x1 - cx1) / rx, (y1 - cy1) / ry); let dt = ang((x1 - cx1) / rx, (y1 - cy1) / ry, (-x1 - cx1) / rx, (-y1 - cy1) / ry);
+    if (!fs && dt > 0) dt -= 2 * Math.PI; else if (fs && dt < 0) dt += 2 * Math.PI;
+    seg(nOf(Math.abs(dt) * Math.max(rx, ry)), t => { const a = t1 + dt * t; return [cx + rx * Math.cos(a) * c - ry * Math.sin(a) * s2, cy + rx * Math.cos(a) * s2 + ry * Math.sin(a) * c] });
+    cur.pts[cur.pts.length - 1] = [ex, ey]; x = ex; y = ey;
+  };
+  while (i < toks.length) {
+    if (/^[a-zA-Z]$/.test(toks[i])) cmd = toks[i++]; else if (!cmd) { i++; continue }
+    const rel = cmd === cmd.toLowerCase(), C = cmd.toUpperCase(), ox = rel ? x : 0, oy = rel ? y : 0;
+    if (C === 'Z') { if (cur) { cur.closed = true; x = sx; y = sy } cur = null; prev = 'Z'; continue }
+    if (!isNum()) { continue }
+    if (C === 'M') { x = ox + num(); y = oy + num(); sx = x; sy = y; start(); cmd = rel ? 'l' : 'L'; prev = 'M'; continue }
+    if (!cur) start();
+    if (C === 'L') { x = ox + num(); y = oy + num(); cur.pts.push([x, y]) }
+    else if (C === 'H') { x = ox + num(); cur.pts.push([x, y]) }
+    else if (C === 'V') { y = oy + num(); cur.pts.push([x, y]) }
+    else if (C === 'C') { const a = ox + num(), b = oy + num(), c2 = ox + num(), d2 = oy + num(), e = ox + num(), f = oy + num(); cubicTo(a, b, c2, d2, e, f) }
+    else if (C === 'S') { const r1 = /[CS]/.test(prev) ? [2 * x - cpx, 2 * y - cpy] : [x, y], c2 = ox + num(), d2 = oy + num(), e = ox + num(), f = oy + num(); cubicTo(r1[0], r1[1], c2, d2, e, f) }
+    else if (C === 'Q') { const a = ox + num(), b = oy + num(), e = ox + num(), f = oy + num(); quadTo(a, b, e, f) }
+    else if (C === 'T') { const r1 = /[QT]/.test(prev) ? [2 * x - cpx, 2 * y - cpy] : [x, y], e = ox + num(), f = oy + num(); quadTo(r1[0], r1[1], e, f) }
+    else if (C === 'A') { const rx = num(), ry = num(), ph = num(), fa = flag(), fs = flag(), e = ox + num(), f = oy + num(); arcTo(rx, ry, ph, fa, fs, e, f) }
+    else { i++; continue }
+    if (!/[CSQT]/.test(C)) { cpx = x; cpy = y } prev = C;
+  }
+  return out.filter(p => p.pts.length > 1 && p.pts.every(q => isFinite(q[0]) && isFinite(q[1])));
+}
+function svgElementPolys(el, tol) {
+  const tag = el.nodeName.toLowerCase(), A = k => parseFloat(el.getAttribute(k)) || 0;
+  if (tag === 'path') return svgPathPolys(el.getAttribute('d') || '', tol);
+  if (tag === 'rect') { const x = A('x'), y = A('y'), w = A('width'), h = A('height'); let rx = el.hasAttribute('rx') ? A('rx') : A('ry'), ry = el.hasAttribute('ry') ? A('ry') : rx; rx = Math.min(rx, w / 2); ry = Math.min(ry, h / 2); if (!(w > 0 && h > 0)) return [];
+    if (!rx || !ry) return [{ pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], closed: true }];
+    return svgPathPolys(`M${x + rx},${y}H${x + w - rx}A${rx},${ry} 0 0 1 ${x + w},${y + ry}V${y + h - ry}A${rx},${ry} 0 0 1 ${x + w - rx},${y + h}H${x + rx}A${rx},${ry} 0 0 1 ${x},${y + h - ry}V${y + ry}A${rx},${ry} 0 0 1 ${x + rx},${y}Z`, tol) }
+  if (tag === 'circle' || tag === 'ellipse') { const cx = A('cx'), cy = A('cy'), rx = tag === 'circle' ? A('r') : A('rx'), ry = tag === 'circle' ? A('r') : A('ry'); if (!(rx > 0 && ry > 0)) return []; const n = Math.max(24, Math.min(720, Math.ceil(Math.PI * 2 * Math.max(rx, ry) / Math.max(tol * 4, 1e-3)))), pts = []; for (let k = 0; k < n; k++) { const a = k / n * Math.PI * 2; pts.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]) } return [{ pts, closed: true }] }
+  if (tag === 'line') return [{ pts: [[A('x1'), A('y1')], [A('x2'), A('y2')]], closed: false }];
+  if (tag === 'polyline' || tag === 'polygon') { const v = (el.getAttribute('points') || '').trim().split(/[\s,]+/).map(Number), pts = []; for (let k = 0; k + 1 < v.length; k += 2) pts.push([v[k], v[k + 1]]); return pts.length > 1 ? [{ pts, closed: tag === 'polygon' }] : [] }
+  return [];
+}
 function importSVG(text) {
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml'), root = doc.documentElement;
   if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) throw new Error(T('Файл не является корректным SVG.', 'The file is not valid SVG.'));
@@ -114,7 +171,15 @@ function importSVG(text) {
   try {
     for (const el of svg.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon')) {
       if (el.closest('defs,clipPath,mask,symbol,marker,pattern')) continue;
-      let len = 0; try { len = el.getTotalLength() } catch (e) { } if (!len) continue; const step = Math.max(len / 6000, .2 / k), n = Math.ceil(len / step), m = el.getCTM(), pts = [];
+      const m = el.getCTM(), tf = (px, py) => m ? [(m.a * px + m.c * py + m.e) * k, (vh - (m.b * px + m.d * py + m.f)) * k] : [px * k, (vh - py) * k], stroke0 = () => (el.getAttribute('stroke') || getComputedStyle(el).stroke || '').toLowerCase();
+      let fast = null; try { const sc = m ? Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1 : 1; fast = svgElementPolys(el, .02 / (k * sc)) } catch (e) { fast = null }
+      if (fast && fast.length) {
+        const clean = fast.map(p => { const pts = p.pts.map(q => tf(q[0], q[1])), f = pts[0], l = pts[pts.length - 1], cl = p.closed || (pts.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < .01); return { q: cl ? rdpClosed(p.closed && !(Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-9) ? pts : pts.slice(0, -1), .01) : rdp(pts, .01), cl } }).filter(c => c.q.length > 1);
+        if (!clean.length) continue; const stroke = stroke0();
+        if (clean.every(c => c.cl)) out.push({ paths: clean.map(c => c.q), closed: true, stroke }); else for (const c of clean) out.push({ paths: [c.q], closed: c.cl, stroke });
+        continue;
+      }
+      let len = 0; try { len = el.getTotalLength() } catch (e) { } if (!len) continue; const step = Math.max(len / 6000, .2 / k), n = Math.ceil(len / step), pts = [];
       for (let i = 0; i <= n; i++) { let p = el.getPointAtLength(Math.min(len, i * step)); if (m) p = p.matrixTransform(m); pts.push([p.x * k, (vh - p.y) * k]) }
       const paths = [[pts[0]]]; for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i]; if (Math.hypot(b[0] - a[0], b[1] - a[1]) > step * k * 4) paths.push([]); paths[paths.length - 1].push(b) }
       const tag = el.nodeName.toLowerCase(), forced = ['rect', 'circle', 'ellipse', 'polygon'].includes(tag);
@@ -157,6 +222,46 @@ function importDXF(text) {
   for (const o of out) o.paths = mapPaths(o.paths, (x, y) => [x * scale, y * scale]);
   placeImported(out, 'dxf', unsupported.size ? T(`Пропущены объекты DXF: ${[...unsupported].join(', ')}.`, `Skipped DXF entities: ${[...unsupported].join(', ')}.`) : null);
 }
+/* multi-page vector results (CDR, PDF, PLT, LightBurn): pages side by side, outlines simplified */
+const IMPORT_WARN = () => ({ text: T('текст (переведите в кривые)', 'text (convert to curves)'), bitmap: T('растровые картинки', 'bitmaps'), image: T('растровые картинки', 'images'), effect: T('эффекты (тени, перетекания)', 'effects (shadows, blends)'), shading: T('градиенты', 'gradients'), damaged: T('повреждённые объекты', 'damaged objects'), objstm: T('часть объектов', 'some objects') });
+function importPages(res, kind, opts = {}) {
+  const out = []; let x = 0, n = 0;
+  for (const pg of res.pages) {
+    const items = [];
+    for (const s of pg.shapes) {
+      const paths = [], open = [];
+      for (const p of s.paths) {
+        if (p.length < 2) continue; const f = p[0], l = p[p.length - 1], cl = s.closed || (p.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < .01);
+        const q = cl ? rdpClosed(s.closed ? p : p.slice(0, -1), .01) : rdp(p, .01); if (q.length < 2) continue; (cl ? paths : open).push(q);
+      }
+      if (paths.length) items.push({ paths, closed: true }); for (const q of open) items.push({ paths: [q], closed: false });
+    }
+    if (!items.length) continue;
+    let b = null; for (const o of items) { const bb = bboxOf(o.paths); b = b ? unionBox(b, bb) : bb }
+    const dx = x - b[0]; for (const o of items) { o.paths = mapPaths(o.paths, (px, py) => [px + dx, py]); out.push(o) }
+    x += b[2] - b[0] + 20; n++;
+  }
+  const W = IMPORT_WARN(), skipped = [...new Set((res.warnings || []).map(w => W[w] || (/^(filter|cmd|shape):/.test(w) ? T('неподдерживаемые команды', 'unsupported commands') : null)).filter(Boolean))];
+  if (!out.length) throw new Error(T('В файле не найдено контуров.', 'No outlines found in the file.') + (skipped.length ? ' ' + T('Пропущено: ', 'Skipped: ') + skipped.join(', ') + '.' : ''));
+  const notes = []; if (n > 1) notes.push(T(`страниц: ${n}, разложены в ряд`, `${n} pages laid out in a row`)); if (skipped.length) notes.push(T('пропущено: ', 'skipped: ') + skipped.join(', ')); if (opts.unverified) notes.push(opts.unverified);
+  placeImported(out, kind, notes.join(' · ') || null);
+}
+async function importMoreVector(f, name) {
+  const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1].toLowerCase(), buf = new Uint8Array(await f.arrayBuffer());
+  if (ext === 'svgz') { importSVG(new TextDecoder().decode(await inflateBytes(buf, 'gzip'))); return }
+  if (ext === 'eps' || (ext === 'ai' && String.fromCharCode(...buf.subarray(0, 4)) === '%!PS')) throw new Error(T('Это PostScript (EPS или старый AI). Сохраните файл как PDF, SVG или DXF — или в Illustrator включите «Создать PDF-совместимый файл».', 'This is PostScript (EPS or legacy AI). Save the file as PDF, SVG or DXF — or enable “Create PDF Compatible File” in Illustrator.'));
+  if (ext === 'cdr') {
+    let res; try { res = await parseCDR(buf, b => inflateBytes(b, 'deflate'), b => inflateBytes(b, 'deflate-raw')) } catch (e) { throw new Error(/1–5/.test(e.message) ? T('Файлы CorelDRAW 1–5 не поддерживаются. Сохраните файл в более новой версии или как SVG/DXF.', 'CorelDRAW 1–5 files are not supported. Save in a newer version or as SVG/DXF.') : T('Не удалось прочитать CDR: ', 'Could not read the CDR: ') + e.message) }
+    const tested = res.version >= 1200 && res.version <= 2400;
+    importPages(res, 'cdr', { unverified: tested ? null : T(`версия CorelDRAW ${res.version / 100 | 0} не проверена — сверьте размеры`, `CorelDRAW version ${res.version / 100 | 0} not tested — check the dimensions`) }); return;
+  }
+  if (ext === 'pdf' || ext === 'ai') {
+    let res; try { res = await parsePDF(buf, b => inflateBytes(b, 'deflate')) } catch (e) { throw new Error(e.message === 'encrypted' ? T('PDF защищён (шифрование). Снимите защиту и попробуйте снова.', 'The PDF is protected (encrypted). Remove the protection and try again.') : e.message === 'PostScript' ? T('Это PostScript — сохраните как PDF.', 'This is PostScript — save it as PDF.') : T('Не удалось прочитать PDF: ', 'Could not read the PDF: ') + e.message) }
+    importPages(res, ext, { unverified: ext === 'ai' ? T('импорт AI не проверен на реальных файлах', 'AI import not tested on real files') : null }); return;
+  }
+  if (/^(plt|hpgl|hpg)$/.test(ext)) { importPages(parseHPGL(new TextDecoder('latin1').decode(buf)), 'plt', { unverified: T('импорт PLT не проверен на реальных файлах — сверьте масштаб (40 единиц = 1 мм)', 'PLT import not tested on real files — check the scale (40 units = 1 mm)') }); return }
+  if (/^lbrn2?$/.test(ext)) { importPages(parseLBRN(new TextDecoder().decode(buf)), 'lbrn', { unverified: T('импорт LightBurn не проверен на реальных файлах — сверьте размеры', 'LightBurn import not tested on real files — check the dimensions') }); return }
+}
 function placeImported(out, kind, note, extra) {
   let b = null; for (const o of out) { const x = bboxOf(o.paths); b = b ? unionBox(b, x) : x }
   const sh = sheetAt(curPlate), dx = plateX(curPlate) + sh.x + 5 - b[0], dy = sh.y + 5 - b[1];
@@ -174,10 +279,10 @@ async function importFile(f) {
   try {
     if (PROJECT_EXT.test(name)) { const text = await f.text(); await openProjectText(text, name, fileSysPath(f)); return }
     if (GCODE_EXT.test(name)) { const text = await f.text(); loadGcode(text, name); P.t = 0; P.playing = false; switchTab('gcode'); refresh(); toast(T(`Открыт ${name}: ${P.lines.length} строк`, `Opened ${name}: ${P.lines.length} lines`)); return }
+    if (MORE_VEC_EXT.test(name)) { busy(T('Читаю файл…', 'Reading the file…')); try { await importMoreVector(f, name) } finally { busy(null) } if (tab !== 'cad') switchTab('cad'); return }
     if (VECTOR_EXT.test(name) || /svg/.test(f.type)) { const text = await f.text(); if (/\.dxf$/i.test(name) || /^\s*0\s*\r?\n\s*SECTION/.test(text)) importDXF(text); else importSVG(text); if (tab !== 'cad') switchTab('cad'); return }
     if (MODEL_EXT.test(name)) { await slLoadFile(f); return }
     if (RASTER_EXT.test(name) || /^image\//.test(f.type)) { const im = await fileToImage(f); if (tab !== 'cad') switchTab('cad'); imageChooser(im); return }
-    if (/\.pdf$/i.test(name)) throw new Error(T('PDF пока не поддерживается. Сохраните чертёж как SVG или DXF.', 'PDF is not supported yet. Save the drawing as SVG or DXF.'));
     throw new Error(T('Неизвестный формат файла.', 'Unknown file format.') + ' ' + SUPPORTED_FORMATS());
   } catch (e) { logError('import', e); toast(T('Не удалось открыть «', 'Could not open “') + name + T('»: ', '”: ') + (e.message || e), 'err') }
 }
@@ -190,7 +295,7 @@ function imageChooser(im) {
   <button data-act="imgRaster">${ic('image', 22)}<b>${T('Растровая гравировка', 'Raster engraving')}</b><small>${T('Дизеринг или полутона, регулировка яркости, обрезка, поворот.', 'Dithering or greyscale, brightness, crop, rotation.')}</small></button>
   <button data-act="imgTrace">${ic('wand', 22)}<b>${T('Трассировка в векторы', 'Trace to vectors')}</b><small>${T('Контуры для резки или гравировки, ч/б или по цветам.', 'Outlines for cutting or engraving, B/W or by colour.')}</small></button>
   <button data-act="imgLayered">${ic('layers', 22)}<b>${T('Многослойная картина', 'Layered picture')}</b><small>${T('1–10 физических слоёв по яркости.', '1–10 physical layers by brightness.')}</small></button>
-  <button data-act="imgRelief" ${isLaser() ? 'disabled title="' + esc(T('Для фрезера', 'For routers')) + '"' : ''}>${ic('relief', 22)}<b>${T('3D-рельеф (фрезер)', '3D relief (router)')}</b><small>${isLaser() ? T('Только для фрезерного станка. Для лазера — растр в оттенках серого.', 'Router only. For lasers use greyscale raster.') : T('Карта высот → черновая и чистовая фрезеровка.', 'Height map → roughing and finishing.')}</small></button></div>`, null);
+  <button data-act="imgRelief" class="${isLaser() ? 'dim' : ''}">${machBadge('cnc')}${ic('relief', 22)}<b>${T('3D-рельеф (фрезер)', '3D relief (router)')}</b><small>${isLaser() ? T('Только для фрезерного станка. Для лазера — растр в оттенках серого.', 'Router only. For lasers use greyscale raster.') : T('Карта высот → черновая и чистовая фрезеровка.', 'Height map → roughing and finishing.')}</small></button></div>`, null);
 }
 
 /* ---------------- tracing (spec 7.2) ---------------- */

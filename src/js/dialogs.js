@@ -185,7 +185,7 @@ function renderMatEdit() {
    <div class="sec"><h3>${T('Статус профиля', 'Profile status')}</h3>${selF('', 'data-mf="status"', MAT_STATUS.map(s => [s, matStatusName(s)]), d.status === 'unverified' && !m.builtin ? 'user' : d.status)}
    ${d.status === 'verified' ? `<div class="grid3">${['machine', 'date', 'note'].map(k => `<label class="fld"><span>${({ machine: T('Станок теста', 'Test machine'), date: T('Дата', 'Date'), note: T('Условия', 'Conditions') })[k]}</span><input class="plain" data-mt="${k}" value="${esc((d.test && d.test[k]) || (k === 'machine' ? S.machine.name : k === 'date' ? new Date().toISOString().slice(0, 10) : ''))}"></label>`).join('')}</div><p class="note">${T('«Проверено» ставится только после реального теста; укажите станок, дату и условия.', '“Verified” is only for profiles tested for real; enter the machine, date and conditions.')}</p>` : ''}
    <div class="row"><button class="primary" data-act="mlSave">${ic('save', 15)} ${T('Сохранить', 'Save')}</button><button class="btn" data-act="mlUse">${ic('sheet', 14)} ${T('Назначить текущему листу', 'Use on current sheet')}</button><button class="btn" data-act="mlDup">${ic('copy', 14)} ${T('Копия', 'Duplicate')}</button>${!m.builtin ? `<button class="btn bad" data-act="mlDel">${ic('trash', 14)} ${BUILTIN_MATS.some(b => b.id === m.id) ? T('Вернуть встроенный', 'Reset to built-in') : T('Удалить', 'Delete')}</button>` : ''}</div>
-   <div class="sec-sub"><b>${T('Калибровка', 'Calibration')}</b><p class="note">${T('Вырежьте тест, измерьте результат штангенциркулем и введите значения выше: «Тест керфа» — ширина реза, «Тест соединения» — посадка, «Тест мощности» — мощность и скорость.', 'Cut a test, measure it with calipers and enter the values above: “Kerf test” for the cut width, “Joint fit test” for the fit, “Power test” for power and speed.')}</p><div class="grid3"><button class="btn" data-act="wiz" data-v="kerf">${ic('kerf', 14)} ${T('Тест керфа', 'Kerf test')}</button><button class="btn" data-act="wiz" data-v="joint">${ic('joint', 14)} ${T('Тест соединения', 'Joint test')}</button><button class="btn" data-act="wiz" data-v="test" ${isLaser() ? '' : 'disabled'}>${ic('test', 14)} ${T('Тест мощности', 'Power test')}</button></div></div>`;
+   <div class="sec-sub"><b>${T('Калибровка', 'Calibration')}</b><p class="note">${T('Вырежьте тест, измерьте результат штангенциркулем и введите значения выше: «Тест керфа» — ширина реза, «Тест соединения» — посадка, «Тест мощности» — мощность и скорость.', 'Cut a test, measure it with calipers and enter the values above: “Kerf test” for the cut width, “Joint fit test” for the fit, “Power test” for power and speed.')}</p><div class="grid3"><button class="btn" data-act="wiz" data-v="kerf">${ic('kerf', 14)} ${T('Тест керфа', 'Kerf test')}</button><button class="btn" data-act="wiz" data-v="joint">${ic('joint', 14)} ${T('Тест соединения', 'Joint test')}</button><button class="btn has-badge" data-act="wiz" data-v="test">${ic('test', 14)} ${T('Тест мощности', 'Power test')}${machBadge('laser')}</button></div></div>`;
 }
 function matEditInput(t) {
   const d = ML && ML.edit; if (!d) return;
@@ -265,4 +265,52 @@ async function bandsDialog() {
   const s = selShapes()[0]; if (!s || s.kind !== 'image') return;
   const n = await confirmBox(T('Слои по яркости', 'Brightness layers'), T('Фото будет разделено на несколько слоёв по яркости — каждый со своими мощностью и скоростью в CAM. Сколько слоёв?', 'The photo is split into brightness bands — each with its own power and speed in CAM. How many layers?'), [2, 3, 4, 5].map(k => ({ label: String(k), value: k, primary: k === 3 })).concat([{ label: T('Отмена', 'Cancel'), value: null }]));
   if (n) splitImageBands(s, n);
+}
+
+/* ---------------- font picker: bundled, computer and loaded fonts ---------------- */
+let FP = null;
+async function openFontPicker(current, onPick) {
+  FP = { cur: current, onPick, q: '', filter: 'all', list: [], sel: current };
+  openModal(`${ic('text', 18)} ${T('Шрифт', 'Font')}`, `<div class="fp"><div class="row"><div class="inp grow"><span class="pre">${ic('search', 14)}</span><input id="fpQ" placeholder="${T('Название шрифта', 'Font name')}" autofocus></div></div>
+    <div class="seg full" id="fpFilter">${[['all', T('Все', 'All')], ['bundled', T('Встроенные', 'Bundled')], ['pc', T('На компьютере', 'On this computer')], ['user', T('Загруженные', 'Loaded')]].map(([k, n]) => `<button data-act="fpFilter" data-v="${k}" aria-pressed="${k === 'all'}">${n}</button>`).join('')}</div>
+    <div class="vlist fp-list" id="fpList"><div class="vinner" id="fpInner"></div></div>
+    <div class="fp-prev" id="fpPrev"></div><p class="note" id="fpNote"></p></div>`,
+    `<button class="btn" data-act="fpFile">${ic('open', 14)} ${T('Загрузить шрифт из файла…', 'Load a font file…')}</button>${DESK && DESK.addFontFolder ? `<button class="btn" data-act="fpFolder">${ic('folder', 14)} ${T('Добавить папку со шрифтами…', 'Add a font folder…')}</button>` : ''}<button class="btn" data-act="closeModal">${T('Отмена', 'Cancel')}</button><button class="primary" data-act="fpOk">${T('Выбрать', 'Choose')}</button>`, 'wide');
+  onModalClose = () => { FP = null };
+  $('#fpQ').oninput = e => { FP.q = e.target.value; fpBuild() };
+  $('#fpList').onscroll = fpRows;
+  $('#fpNote').textContent = T('Читаю шрифты компьютера…', 'Reading the computer’s fonts…');
+  let err = null; try { await loadSystemFonts() } catch (e) { err = e }
+  if (!FP) return;
+  const n = systemFonts ? systemFonts.length : 0;
+  $('#fpNote').textContent = err ? err.message : DESK ? T(`Шрифтов на компьютере: ${n}. Включены все файлы шрифтов из системных папок, папки пользователя и добавленных вами папок — даже не установленные.`, `${n} fonts on this computer: every font file in the system folders, your user folder and folders you added — even ones that are not installed.`) : T(`Доступно шрифтов: ${n}.`, `${n} fonts available.`);
+  fpBuild(); fpPreview();
+}
+function fpBuild() {
+  if (!FP) return; const q = FP.q.trim().toLowerCase(), list = [];
+  if (FP.filter === 'all' || FP.filter === 'bundled') for (const [k, v] of Object.entries(BUNDLED_FONTS)) list.push({ id: k, name: v.n, tag: T('встроенный', 'bundled') });
+  if (FP.filter !== 'bundled') for (const e of systemFonts || []) { if (FP.filter === 'user' && e.src !== 'user') continue; if (FP.filter === 'pc' && e.src === 'user') continue; list.push({ id: e.family, name: e.family, tag: e.src === 'user' ? T('загружен', 'loaded') : e.faces.some(f => f.user) ? T('папка пользователя', 'user folder') : `${e.faces.length} ${T('нач.', 'st.')}` }) }
+  FP.list = q ? list.filter(x => x.name.toLowerCase().includes(q)) : list; fpRows();
+}
+function fpRows() {
+  const box = $('#fpList'), inn = $('#fpInner'); if (!box || !FP) return; const rh = 34, n = FP.list.length; inn.style.height = Math.max(1, n) * rh + 'px';
+  if (!n) { inn.innerHTML = `<p class="note" style="padding:8px">${T('Ничего не найдено.', 'Nothing found.')}</p>`; return }
+  const i0 = Math.max(0, Math.floor(box.scrollTop / rh) - 4), i1 = Math.min(n, Math.ceil((box.scrollTop + (box.clientHeight || 300)) / rh) + 4); let h = '';
+  for (let i = i0; i < i1; i++) { const x = FP.list[i], fam = fontFamily(x.id), ready = BUNDLED_FAMILIES.has(fam) || FONT_LOADED.has(fam); h += `<div class="li${x.id === FP.sel ? ' on' : ''}" style="position:absolute;left:0;right:0;top:${i * rh}px" data-act="fpPick" data-v="${esc(x.id)}"><span class="nm" style="${ready ? `font-family:'${esc(fam).replace(/'/g, '')}',var(--f-ui);font-size:14px` : ''}">${esc(x.name)}</span><span class="meta">${esc(x.tag)}</span></div>` }
+  inn.innerHTML = h;
+}
+async function fpPreview() {
+  const el = $('#fpPrev'); if (!el || !FP) return; const f = FP.sel, fam = fontFamily(f);
+  el.innerHTML = `<span class="note">${T('Загружаю…', 'Loading…')}</span>`;
+  const ok = await ensureFont(f); if (!FP || FP.sel !== f) return;
+  el.innerHTML = `<div class="fp-sample" style="font-family:'${esc(fam).replace(/'/g, '')}',var(--f-ui)">${esc(fontLabel(f))} · Мастерская 2026 · Abc Gg 0123</div>${ok || BUNDLED_FAMILIES.has(fam) || fontAvailable(f) ? '' : `<div class="warnline">${ic('warn', 13)} ${T('Шрифт не удалось загрузить.', 'The font could not be loaded.')}</div>`}`;
+  fpRows();
+}
+function fontPickerAction(act, v) {
+  if (!FP) return;
+  if (act === 'fpFilter') { FP.filter = v; $$('#fpFilter button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v)); fpBuild() }
+  else if (act === 'fpPick') { FP.sel = v; fpRows(); fpPreview() }
+  else if (act === 'fpOk') { const f = FP.sel, cb = FP.onPick; closeModal(); ensureFont(f).then(() => cb(f)) }
+  else if (act === 'fpFile') $('#fileFont').click();
+  else if (act === 'fpFolder') DESK.addFontFolder().then(async r => { if (!r || !r.ok) return; systemFonts = null; $('#fpNote').textContent = T('Читаю шрифты…', 'Reading fonts…'); await loadSystemFonts(true); fpBuild(); $('#fpNote').textContent = T(`Папка добавлена: ${r.dir}. Шрифтов: ${systemFonts.length}.`, `Folder added: ${r.dir}. ${systemFonts.length} fonts.`) });
 }

@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('skykerfDesktop', {
   autosave: (data) => ipcRenderer.invoke('skykerf:autosave', data),
   recovery: () => ipcRenderer.invoke('skykerf:recovery'),
   log: (line) => ipcRenderer.invoke('skykerf:log', line),
+  // fonts: all font files in the system/user font folders and folders the user added
+  listFonts: () => ipcRenderer.invoke('skykerf:fonts'),
+  fontData: (p) => ipcRenderer.invoke('skykerf:fontData', p),
+  addFontFolder: () => ipcRenderer.invoke('skykerf:addFontFolder'),
   // real path of a dropped/selected file (Electron ≥ 32 has no File.path)
   pathForFile: (file) => { try { return webUtils.getPathForFile(file) || null } catch (e) { return null } },
 });

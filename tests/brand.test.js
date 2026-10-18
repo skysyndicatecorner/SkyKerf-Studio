@@ -26,7 +26,7 @@ test('package metadata uses the new name', () => {
   const p = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(p.productName, 'SkyKerf_Studio'); assert.equal(p.name, 'skykerf-studio');
   assert.match(p.build.nsis.artifactName, /^SkyKerf_Studio/); assert.match(p.build.linux.artifactName, /^SkyKerf_Studio/);
-  assert.match(p.homepage, /skysyndicatecorner\/SkyKerf_Studio/);
+  assert.match(p.homepage, /skysyndicatecorner\/SkyKerf-Studio/);
 });
 test('app version matches package.json', () => {
   const p = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));

@@ -1,7 +1,7 @@
 # SkyKerf_Studio
 
-[![Tests](https://github.com/skysyndicatecorner/SkyKerf_Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/skysyndicatecorner/SkyKerf_Studio/actions/workflows/ci.yml)
-[![Build desktop](https://github.com/skysyndicatecorner/SkyKerf_Studio/actions/workflows/build.yml/badge.svg)](https://github.com/skysyndicatecorner/SkyKerf_Studio/actions/workflows/build.yml)
+[![Tests](https://github.com/skysyndicatecorner/SkyKerf-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/skysyndicatecorner/SkyKerf-Studio/actions/workflows/ci.yml)
+[![Build desktop](https://github.com/skysyndicatecorner/SkyKerf-Studio/actions/workflows/build.yml/badge.svg)](https://github.com/skysyndicatecorner/SkyKerf-Studio/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 
 Открытая CAD/CAM-программа для лазерных граверов и фрезерных ЧПУ. Одно окно в стиле современных слайсеров: **CAD → CAM → проверка G-code → станок**. Русский и английский интерфейс, простой и профессиональный режимы.
@@ -42,7 +42,7 @@
 
 ## Скачать
 
-Готовые сборки — на странице [Releases](https://github.com/skysyndicatecorner/SkyKerf_Studio/releases):
+Готовые сборки — на странице [Releases](https://github.com/skysyndicatecorner/SkyKerf-Studio/releases):
 
 | Система | Файл |
 |---|---|

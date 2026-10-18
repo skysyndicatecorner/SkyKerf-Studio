@@ -9,13 +9,13 @@
     "name": "SkyKerf_Studio contributors",
     "email": "skykerf-studio@users.noreply.github.com"
   },
-  "homepage": "https://github.com/skysyndicatecorner/SkyKerf_Studio",
+  "homepage": "https://github.com/skysyndicatecorner/SkyKerf-Studio",
   "repository": {
     "type": "git",
-    "url": "https://github.com/skysyndicatecorner/SkyKerf_Studio.git"
+    "url": "https://github.com/skysyndicatecorner/SkyKerf-Studio.git"
   },
   "bugs": {
-    "url": "https://github.com/skysyndicatecorner/SkyKerf_Studio/issues"
+    "url": "https://github.com/skysyndicatecorner/SkyKerf-Studio/issues"
   },
   "private": true,
   "scripts": {

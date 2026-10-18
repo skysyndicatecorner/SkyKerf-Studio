@@ -5,7 +5,7 @@
 ## Быстрый старт
 
 ```bash
-git clone https://github.com/skysyndicatecorner/SkyKerf_Studio.git
+git clone https://github.com/skysyndicatecorner/SkyKerf-Studio.git
 cd SkyKerf_Studio
 npm install
 npm test

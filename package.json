@@ -1,7 +1,7 @@
 {
   "name": "skykerf-studio",
   "productName": "SkyKerf_Studio",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Open-source CAD/CAM for laser cutters and CNC routers: drawing on real sheets, nesting, toolpaths, postprocessors with validation, G-code preview, machine control, parametric generators, 3D model slicing.",
   "main": "main.js",
   "license": "MIT",
@@ -9,13 +9,13 @@
     "name": "SkyKerf_Studio contributors",
     "email": "skykerf-studio@users.noreply.github.com"
   },
-  "homepage": "https://github.com/skysyndicatecorner/SkyKerf_Studio",
+  "homepage": "https://github.com/skysyndicatecorner/SkyKerf-Studio",
   "repository": {
     "type": "git",
-    "url": "https://github.com/skysyndicatecorner/SkyKerf_Studio.git"
+    "url": "https://github.com/skysyndicatecorner/SkyKerf-Studio.git"
   },
   "bugs": {
-    "url": "https://github.com/skysyndicatecorner/SkyKerf_Studio/issues"
+    "url": "https://github.com/skysyndicatecorner/SkyKerf-Studio/issues"
   },
   "private": true,
   "scripts": {

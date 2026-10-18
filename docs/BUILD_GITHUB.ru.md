@@ -23,13 +23,13 @@
 
 ## 1. Репозиторий
 
-Адрес проекта: `https://github.com/skysyndicatecorner/SkyKerf_Studio`.
+Адрес проекта: `https://github.com/skysyndicatecorner/SkyKerf-Studio`.
 
 - **Если репозиторий уже есть под старым именем** (например, `Kerf-Studio`) — не создавайте новый, а переименуйте старый: так сохранятся звёзды, задачи, релизы и перенаправление старых ссылок. Пошагово — в [RENAME.md](RENAME.md).
 - **Если репозитория ещё нет:**
   1. Откройте <https://github.com/new>.
   2. **Owner** — `skysyndicatecorner` (проверьте, что выбран нужный владелец — личный аккаунт или организация).
-  3. **Repository name** — `SkyKerf_Studio`.
+  3. **Repository name** — `SkyKerf-Studio`.
   4. **Public** (для бесплатных минут Actions без ограничений) или Private.
   5. **Не** ставьте галочки «Add a README», «.gitignore», «license» — они уже есть в архиве.
   6. **Create repository**.
@@ -63,7 +63,7 @@
 ### Способ Б. Через git (если git установлен)
 
 ```bash
-git clone https://github.com/skysyndicatecorner/SkyKerf_Studio.git
+git clone https://github.com/skysyndicatecorner/SkyKerf-Studio.git
 cd SkyKerf_Studio
 # скопируйте сюда содержимое распакованной папки SkyKerf_Studio, включая .github
 git add -A

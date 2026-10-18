@@ -13,7 +13,7 @@
 | API настольной версии в странице | `window.kerfDesktop`, каналы `kerf:*` | `window.skykerfDesktop`, каналы `skykerf:*` |
 | Ключи настроек в браузере | `kerf.*` | `skykerf.*` |
 | Папка настроек Electron | `…/Kerf Studio` | `…/SkyKerf_Studio` |
-| Ссылки, бейджи, homepage | `OWNER/kerf-studio` | `skysyndicatecorner/SkyKerf_Studio` |
+| Ссылки, бейджи, homepage | `OWNER/kerf-studio` | `skysyndicatecorner/SkyKerf-Studio` |
 
 Слово **kerf** в коде и интерфейсе — это технический термин (ширина реза), оно не переименовывалось: `kerfPaths`, «Тест керфа», поле `kerf` в материалах и т. д.
 
@@ -47,7 +47,7 @@
 ### 4.2. Переименуйте
 
 1. Репозиторий → **Settings → General**.
-2. **Repository name** → `SkyKerf_Studio` → **Rename**.
+2. **Repository name** → `SkyKerf-Studio` → **Rename**.
 3. GitHub автоматически перенаправляет старые веб-ссылки и git-адреса на новое имя. Перенаправление перестанет работать, только если кто-то создаст новый репозиторий со старым именем у того же владельца — не делайте этого.
 
 ### 4.3. Обновите локальные копии
@@ -56,7 +56,7 @@
 
 ```bash
 git remote -v                       # посмотрите текущий адрес origin
-git remote set-url origin https://github.com/skysyndicatecorner/SkyKerf_Studio.git
+git remote set-url origin https://github.com/skysyndicatecorner/SkyKerf-Studio.git
 git remote -v                       # проверьте
 git fetch                           # убедитесь, что доступ есть
 ```
@@ -66,7 +66,7 @@ git fetch                           # убедитесь, что доступ е
 ### 4.4. Проверьте после переименования
 
 - [ ] Вкладка **Actions**: запуски **Tests** и **Build desktop** видны; ручной запуск работает.
-- [ ] Бейджи в README показывают статус (адреса уже указывают на `skysyndicatecorner/SkyKerf_Studio`).
+- [ ] Бейджи в README показывают статус (адреса уже указывают на `skysyndicatecorner/SkyKerf-Studio`).
 - [ ] **Releases**: старые релизы на месте; новый релиз `v0.3.0` собирается с файлами `SkyKerf_Studio-*`.
 - [ ] **Settings → Secrets** (если были) сохранились — секреты не зависят от имени репозитория.
 - [ ] **Description / Website / Topics** на главной странице репозитория обновлены вручную (их нет в файлах).

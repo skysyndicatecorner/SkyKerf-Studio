@@ -31,6 +31,12 @@ All fonts are used unmodified under the SIL Open Font License 1.1.
 
 System fonts chosen by the user in the text tool are read from the user's computer at run time and are not distributed with SkyKerf_Studio. Their outlines become part of the user's own project.
 
+## File format references / Описания форматов
+
+The CorelDRAW (.cdr) reader in `src/js/cdr.js` was written from the publicly documented structure of the format as implemented by [libcdr](https://wiki.documentfoundation.org/DLP/Libraries/libcdr) (MPL 2.0). No libcdr source code is included or translated line by line. The PDF, HPGL and LightBurn readers were written for this project from the public specifications. No third-party drawings are included in the repository or the tests.
+
+Читатель CorelDRAW написан по открытому описанию формата (libcdr, MPL 2.0) без копирования кода. Читатели PDF, HPGL и LightBurn написаны для проекта по открытым спецификациям. Чужие чертежи в репозиторий и тесты не входят.
+
 ## Desktop runtime / Оболочка
 
 The Windows and Linux builds are packaged with [Electron](https://github.com/electron/electron) (MIT). Electron ships its own license and the Chromium credits (`LICENSE.electron.txt`, `LICENSES.chromium.html`) inside every build; electron-builder adds them automatically. Electron is not part of the source repository.
@@ -43,4 +49,4 @@ No proprietary machine models, icons, interface assets, materials data or postpr
 
 ## Trademarks / Товарные знаки
 
-Names of other products mentioned in documentation (LightBurn, Bambu Studio, Creality Print, Fusion, Easel, xTool, GRBL and others) belong to their owners. SkyKerf_Studio is not affiliated with them.
+Names of other products mentioned in documentation (CorelDRAW, Adobe Illustrator, LightBurn, Bambu Studio, Creality Print, Fusion, Easel, xTool, GRBL and others) belong to their owners. SkyKerf_Studio is not affiliated with them.

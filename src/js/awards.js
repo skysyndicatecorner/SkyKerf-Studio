@@ -101,8 +101,16 @@ GENS.awards = {
       info = T(`Пара ${fx(w, 0)}×${h} мм`, `Pair ${fx(w, 0)}×${h} mm`);
     }
     else if (o.kind === 'keyring') {
-      const f = placeFigure(figOf(o.fig), H, 0, 0), b = bboxOf(f.cut), rr = Math.max(4, H * .09), ring = boolOp([circlePts(b[2] - rr * .2, b[3] - rr * .2, rr * 1.4, 32)], [circlePts(b[2] - rr * .2, b[3] - rr * .2, rr * .55, 20)], 'diff');
-      let body = union([f.cut, ring]); body = boolOp(body, [circlePts(b[2] - rr * .2, b[3] - rr * .2, rr * .55, 20)], 'diff'); const items = [cut(body)]; if (f.lines.length) items.push(eng(f.lines)); const tt = await txt(o.text, Math.min(H * .12, 6), (b[0] + b[2]) / 2, b[1] + H * .15, 'unb'); if (tt.length || f.fills.length) items.push(engF(tt.concat(f.fills)));
+      const f = placeFigure(figOf(o.fig), H, 0, 0), rr = Math.max(4, H * .09);
+      // the ring sits on the highest point of the figure and overlaps it, so it is one piece with a hole
+      let tp = null; for (const q of f.cut) for (const p of q) if (!tp || p[1] > tp[1]) tp = p;
+      const rc = [tp[0], tp[1] + rr * .75], hole = circlePts(rc[0], rc[1], rr * .55, 20);
+      let body = union([f.cut, [circlePts(rc[0], rc[1], rr * 1.4, 32)]]); body = boolOp(body, [hole], 'diff'); const items = [cut(body)]; if (f.lines.length) items.push(eng(f.lines));
+      // the text must stay inside the figure with a margin; it shrinks to fit, or is left out with a note
+      const inner = offsetPaths(f.cut, -Math.max(1.5, t * .6)), b = bboxOf(f.cut); let tt = [];
+      if (String(o.text || '').trim() && inner.length) for (let sz = Math.min(H * .12, 6); sz >= 2.5 && !tt.length; sz *= .85) { const cand = await txt(o.text, sz, (b[0] + b[2]) / 2, b[1] + (b[3] - b[1]) * .38, 'unb'); if (cand.length && cand.every(q => q.every(p => inPolys(p, inner)))) tt = cand }
+      if (String(o.text || '').trim() && !tt.length) bom.push(T('Надпись не помещается внутри фигуры — она не добавлена. Сократите текст или увеличьте размер.', 'The text does not fit inside the figure, so it was left out. Shorten it or make the key ring larger.'));
+      if (tt.length || f.fills.length) items.push(engF(tt.concat(f.fills)));
       add(T('Брелок', 'Key ring'), items, XY(0, 0, 0), hslHex(200, 45, 55)); info = T(`Брелок ${H} мм`, `Key ring ${H} mm`);
     }
     return { parts, asm, steps, bom, info: info + (q > 1 ? ` × ${q}` : '') };

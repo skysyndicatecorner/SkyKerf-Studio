@@ -10,7 +10,7 @@ const reliefCache = new Map();
 function reliefGrid(rel, gw, gh) {
   const key = [rel.asset, rel.depth, rel.base, rel.invert, rel.gamma, rel.smooth, gw, gh].join('|'); if (reliefCache.has(key)) return reliefCache.get(key);
   const im = imgEl(rel.asset); if (!im || !im.complete || !im.naturalWidth) return null;
-  const c = document.createElement('canvas'); c.width = gw; c.height = gh; const x = c.getContext('2d'); if (rel.smooth) x.filter = `blur(${rel.smooth * .5}px)`; x.drawImage(im, 0, 0, gw, gh); x.filter = 'none';
+  const c = document.createElement('canvas'); c.width = gw; c.height = gh; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, gw, gh); if (rel.smooth) x.filter = `blur(${rel.smooth * .5}px)`; x.drawImage(im, 0, 0, gw, gh); x.filter = 'none';
   const d = x.getImageData(0, 0, gw, gh).data, H = new Float32Array(gw * gh), gm = rel.gamma || 1;
   for (let i = 0; i < gw * gh; i++) { let l = (.299 * d[i * 4] + .587 * d[i * 4 + 1] + .114 * d[i * 4 + 2]) / 255; if (rel.invert) l = 1 - l; l = Math.pow(l, gm); H[i] = -(rel.base || 0) - rel.depth * (1 - l) }
   if (reliefCache.size > 6) reliefCache.clear(); reliefCache.set(key, H); return H;

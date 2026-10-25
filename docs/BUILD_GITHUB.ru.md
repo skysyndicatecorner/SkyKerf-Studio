@@ -1,5 +1,7 @@
 # Сборка SkyKerf_Studio через GitHub — полная инструкция
 
+> Ниже `X.Y.Z` — номер версии, например `0.4.1`. Он берётся из `package.json`.
+
 Эта инструкция для тех, кто хочет получить готовые установщики для **Windows** (`.exe`) и **Linux** (`.AppImage`, `.deb`), ничего не устанавливая на свой компьютер. Всю работу делают бесплатные серверы GitHub Actions. Понадобятся только браузер и аккаунт GitHub.
 
 Время: первый раз — 20–30 минут, дальше — 2 минуты на запуск и 10–15 минут ожидания.
@@ -38,7 +40,7 @@
 
 ## 2. Загрузка файлов
 
-Распакуйте архив `SkyKerf_Studio-0.3.0.zip`. Внутри — папка `SkyKerf_Studio` с файлами `package.json`, `main.js`, папками `src`, `docs`, `tests`, `.github` и др.
+Распакуйте архив `SkyKerf_Studio-X.Y.Z.zip`. Внутри — папка `SkyKerf_Studio` с файлами `package.json`, `main.js`, папками `src`, `docs`, `tests`, `.github` и др.
 
 > Папка `.github` начинается с точки. В Windows и macOS такие папки бывают скрыты. Включите показ скрытых файлов: Windows — Проводник → «Вид» → «Показать» → «Скрытые элементы»; macOS — `Cmd + Shift + .`.
 
@@ -48,7 +50,7 @@
 
 1. На странице пустого репозитория нажмите **uploading an existing file** (или **Add file → Upload files**).
 2. Откройте папку `SkyKerf_Studio` и выделите **её содержимое** (не саму папку): `package.json`, `main.js`, `preload.js`, `src`, `docs`, `tests`, `build`, `licenses`, `.github`, `README.md` и остальное. Перетащите в окно браузера.
-3. Дождитесь окончания загрузки, внизу напишите сообщение, например `SkyKerf_Studio 0.3.0`, и нажмите **Commit changes**.
+3. Дождитесь окончания загрузки, внизу напишите сообщение, например `SkyKerf_Studio X.Y.Z`, и нажмите **Commit changes**.
 4. **Проверьте, что загрузилась папка `.github`.** Откройте в репозитории `.github/workflows/` — там должны быть `build.yml` и `ci.yml`. Браузер иногда пропускает папки с точкой.
 
 Если `.github` не загрузилась — создайте файлы вручную:
@@ -67,7 +69,7 @@ git clone https://github.com/skysyndicatecorner/SkyKerf-Studio.git
 cd SkyKerf_Studio
 # скопируйте сюда содержимое распакованной папки SkyKerf_Studio, включая .github
 git add -A
-git commit -m "SkyKerf_Studio 0.3.0"
+git commit -m "SkyKerf_Studio X.Y.Z"
 git push
 ```
 
@@ -107,8 +109,8 @@ git push
 2. Через несколько секунд появится новый запуск. Внутри три задачи: `test`, затем `build (windows-latest, --win)` и `build (ubuntu-latest, --linux)`, которые идут параллельно.
 3. Ждите 8–15 минут. Первая сборка дольше: GitHub скачивает Electron.
 4. Когда всё зелёное, прокрутите страницу запуска вниз до **Artifacts**:
-   - `SkyKerf_Studio-Windows` — внутри `SkyKerf_Studio-Setup-0.3.0.exe` и `SkyKerf_Studio-Portable-0.3.0.exe`;
-   - `SkyKerf_Studio-Linux` — внутри `SkyKerf_Studio-0.3.0-x86_64.AppImage` и `SkyKerf_Studio-0.3.0-amd64.deb`.
+   - `SkyKerf_Studio-Windows` — внутри `SkyKerf_Studio-Setup-X.Y.Z.exe` и `SkyKerf_Studio-Portable-X.Y.Z.exe`;
+   - `SkyKerf_Studio-Linux` — внутри `SkyKerf_Studio-X.Y.Z-x86_64.AppImage` и `SkyKerf_Studio-X.Y.Z-amd64.deb`.
 5. Скачайте и распакуйте zip. Артефакты хранятся 90 дней (настраивается в **Settings → Actions → General → Artifact and log retention**).
 
 > Скачивать артефакты может только вошедший в GitHub пользователь. Чтобы раздать программу всем, используйте релиз (следующий шаг).
@@ -118,13 +120,13 @@ git push
 ## 6. Релиз с автоматической сборкой
 
 1. **Обновите номер версии** в двух местах (они должны совпадать — это проверяет автотест):
-   - `package.json` → `"version": "0.3.0"`;
-   - `src/js/core.js` → `const APP_VERSION = '0.3.0';`.
+   - `package.json` → `"version": "X.Y.Z"`;
+   - `src/js/core.js` → `const APP_VERSION = 'X.Y.Z';`.
    Через браузер: откройте файл → значок карандаша → исправьте → **Commit changes**.
 2. Допишите изменения в `CHANGELOG.md` (необязательно, но полезно).
 3. **Releases** (справа на главной странице репозитория) → **Draft a new release**.
-4. **Choose a tag** → впишите `v0.3.0` → **Create new tag: v0.3.0 on publish**. Ветка — `main`.
-5. **Release title** — например `SkyKerf_Studio 0.3.0`. В описание можно вставить раздел из `CHANGELOG.md`.
+4. **Choose a tag** → впишите `vX.Y.Z` → **Create new tag: vX.Y.Z on publish**. Ветка — `main`.
+5. **Release title** — например `SkyKerf_Studio X.Y.Z`. В описание можно вставить раздел из `CHANGELOG.md`.
 6. **Publish release**.
 7. Публикация запускает **Build desktop**. Через 10–15 минут файлы `.exe`, `.AppImage`, `.deb` появятся внизу страницы релиза в разделе **Assets**.
 
@@ -136,10 +138,10 @@ git push
 
 | Файл | Для чего |
 |---|---|
-| `SkyKerf_Studio-Setup-0.3.0.exe` | установщик Windows 10/11 x64; можно выбрать папку, создаёт ярлыки, связывает файлы `.kerf` |
-| `SkyKerf_Studio-Portable-0.3.0.exe` | запуск без установки (например, с флешки) |
-| `SkyKerf_Studio-0.3.0-x86_64.AppImage` | любой современный Linux x64: `chmod +x SkyKerf_Studio-*.AppImage`, затем запустить |
-| `SkyKerf_Studio-0.3.0-amd64.deb` | Ubuntu, Debian, Mint: `sudo apt install ./SkyKerf_Studio-0.3.0-amd64.deb` |
+| `SkyKerf_Studio-Setup-X.Y.Z.exe` | установщик Windows 10/11 x64; можно выбрать папку, создаёт ярлыки, связывает файлы `.kerf` |
+| `SkyKerf_Studio-Portable-X.Y.Z.exe` | запуск без установки (например, с флешки) |
+| `SkyKerf_Studio-X.Y.Z-x86_64.AppImage` | любой современный Linux x64: `chmod +x SkyKerf_Studio-*.AppImage`, затем запустить |
+| `SkyKerf_Studio-X.Y.Z-amd64.deb` | Ubuntu, Debian, Mint: `sudo apt install ./SkyKerf_Studio-X.Y.Z-amd64.deb` |
 
 - **Windows SmartScreen** («Система Windows защитила ваш компьютер»): сборка не подписана сертификатом. **Подробнее → Выполнить в любом случае**.
 - **AppImage не запускается на Ubuntu 22.04+**: нужна библиотека FUSE 2 — `sudo apt install libfuse2` (на Ubuntu 24.04 пакет называется `libfuse2t64`).

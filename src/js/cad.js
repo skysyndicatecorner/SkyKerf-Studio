@@ -20,12 +20,20 @@ function drawNow() {
   if (!CW) return;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, CW, CH);
   if (tab === 'gcode' && P.mode === '3d') { draw3D(ctx, CW, CH); return }
-  if (tab === 'cad') { for (let i = 0; i < S.sheets.length; i++)drawBed(ctx, V, CW, CH, i); drawParkArea(); drawShapes(ctx, V, 1); drawSelection(); drawTemp() }
+  if (tab === 'cad') { for (let i = 0; i < S.sheets.length; i++)drawBed(ctx, V, CW, CH, i); drawParkArea(); drawShapes(ctx, V, 1); drawSelection(); drawTemp(); if (!S.shapes.length) drawEmptyHint() }
   else {
     const pl = tab === 'gcode' ? (P.file ? 0 : P.plate) : curPlate; drawBed(ctx, V, CW, CH, pl); const ox = P.file ? 0 : plateX(pl);
     if (tab === 'cam') { drawShapes(ctx, V, .32, curPlate); drawMoves(ctx, p => w2s(p[0] + ox, p[1]), P.total, true) }
     else { drawMoves(ctx, p => w2s(p[0] + ox, p[1]), P.t, false); drawHead2D(ctx, p => w2s(p[0] + ox, p[1]), P.t) }
   }
+}
+/* empty project: say what to do, right on the sheet */
+function drawEmptyHint() {
+  const sh = sheetAt(curPlate); if (!sh) return; const X = plateX(curPlate), [a, b] = w2s(X + sh.x, sh.y + sh.h), [c2, d] = w2s(X + sh.x + sh.w, sh.y), cx = (a + c2) / 2, cy = (b + d) / 2, w = c2 - a; if (w < 160) return;
+  ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = css('--muted');
+  ctx.font = `600 ${Math.min(17, w / 22)}px ${css('--f-ui')}`; ctx.fillText(T('Лист пуст', 'The sheet is empty'), cx, cy - 16);
+  ctx.font = `${Math.min(13.5, w / 28)}px ${css('--f-ui')}`; ctx.fillText(T('Выберите мастер слева или перетащите сюда картинку либо файл', 'Pick a wizard on the left or drop a picture or a file here'), cx, cy + 10);
+  ctx.restore();
 }
 function niceStep(px) { for (const s of [.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]) if (s * px >= 9) return s; return 1000 }
 function drawBed(c, v, W, H, pi = 0, bare) {

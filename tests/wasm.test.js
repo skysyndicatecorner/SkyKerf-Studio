@@ -14,7 +14,19 @@ for (const kind of ['fs', 'atkinson', 'jarvis', 'stucki']) test(`dither ${kind}:
 });
 test('box blur: WebAssembly matches JavaScript', async () => {
   await K.WK.whenReady; const w = 120, h = 90, a = K.boxBlurK(img(w, h), w, h, 3), b = K.boxBlurJS(img(w, h), w, h, 3);
-  let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i])); assert.ok(m < 1e-2, String(m));
+  let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i])); assert.ok(m < 1e-4, String(m));
+});
+/* 0.4.0 regression: f32 sums drifted on flat areas, and a histogram threshold at exactly 255 turned the drift into stripes */
+test('box blur: a flat area stays exactly flat (no drift along rows)', async () => {
+  await K.WK.whenReady; const w = 720, h = 540, L = new Float32Array(w * h).fill(255);
+  for (let y = 200; y < 340; y++) for (let x = 250; x < 470; x++) L[y * w + x] = 90; // a dark square on white
+  for (const r of [1, 2, 5]) {
+    const a = K.boxBlurK(L, w, h, r), b = K.boxBlurJS(L, w, h, r); let flat = 0, diff = 0;
+    for (let y = 0; y < 150; y++) for (let x = 0; x < w; x++) if (a[y * w + x] !== 255) flat++;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
+    assert.equal(flat, 0, `r=${r}: ${flat} white pixels are no longer exactly 255`);
+    assert.equal(diff, 0, `r=${r}: ${diff} pixels differ from JavaScript`);
+  }
 });
 test('mesh slice: a cube cut in the middle gives one square loop of 4 segments', async () => {
   await K.WK.whenReady;

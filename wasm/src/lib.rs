@@ -27,7 +27,7 @@ pub extern "C" fn heap_base() -> usize {
 /// Version of the kernel set, checked by the loader.
 #[no_mangle]
 pub extern "C" fn version() -> i32 {
-    3
+    4
 }
 
 // error-diffusion kernels: (dx, dy, weight), divisor
@@ -78,6 +78,9 @@ pub unsafe extern "C" fn dither(g: *mut f32, out: *mut u8, w: i32, h: i32, kind:
 }
 
 /// Box blur of radius r, applied twice (≈ Gaussian); `tmp` must hold w·h floats.
+// Sums are kept in f64 like the JavaScript twin: with f32 sums a flat area
+// (e.g. pure white) drifts by ~1e-4 along a row, and a histogram threshold that
+// lands exactly on that value turns the drift into stripes (fixed in 0.4.1).
 #[no_mangle]
 pub unsafe extern "C" fn box_blur(a: *mut f32, tmp: *mut f32, w: i32, h: i32, r: i32) {
     let (w, h, r) = (w.max(0) as usize, h.max(0) as usize, r.max(0) as isize);
@@ -89,45 +92,45 @@ pub unsafe extern "C" fn box_blur(a: *mut f32, tmp: *mut f32, w: i32, h: i32, r:
     for _ in 0..2 {
         for y in 0..h {
             let row = y * w;
-            let (mut s, mut n) = (0.0f32, 0.0f32);
+            let (mut s, mut n) = (0.0f64, 0.0f64);
             for xx in -r..=r {
                 if xx >= 0 && (xx as usize) < w {
-                    s += a[row + xx as usize];
+                    s += a[row + xx as usize] as f64;
                     n += 1.0;
                 }
             }
             for x in 0..w {
-                t[row + x] = s / n;
+                t[row + x] = (s / n) as f32;
                 let lo = x as isize - r;
                 let hi = x as isize + r + 1;
                 if lo >= 0 {
-                    s -= a[row + lo as usize];
+                    s -= a[row + lo as usize] as f64;
                     n -= 1.0;
                 }
                 if (hi as usize) < w {
-                    s += a[row + hi as usize];
+                    s += a[row + hi as usize] as f64;
                     n += 1.0;
                 }
             }
         }
         for x in 0..w {
-            let (mut s, mut n) = (0.0f32, 0.0f32);
+            let (mut s, mut n) = (0.0f64, 0.0f64);
             for yy in -r..=r {
                 if yy >= 0 && (yy as usize) < h {
-                    s += t[yy as usize * w + x];
+                    s += t[yy as usize * w + x] as f64;
                     n += 1.0;
                 }
             }
             for y in 0..h {
-                a[y * w + x] = s / n;
+                a[y * w + x] = (s / n) as f32;
                 let lo = y as isize - r;
                 let hi = y as isize + r + 1;
                 if lo >= 0 {
-                    s -= t[lo as usize * w + x];
+                    s -= t[lo as usize * w + x] as f64;
                     n -= 1.0;
                 }
                 if (hi as usize) < h {
-                    s += t[hi as usize * w + x];
+                    s += t[hi as usize * w + x] as f64;
                     n += 1.0;
                 }
             }

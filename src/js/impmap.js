@@ -39,6 +39,7 @@ function impGroups(out) {
   return gs;
 }
 function impMemory() { try { return JSON.parse(store.get('impMap') || '{}') || {} } catch (e) { return {} } }
+const isWhiteish = c => !!c && c[0] > 235 && c[1] > 235 && c[2] > 235;
 function impSuggest(gs) {
   const mem = impMemory();
   for (const g of gs) {
@@ -48,7 +49,8 @@ function impSuggest(gs) {
     else if (mem[impColorKey(g)]) { op = mem[impColorKey(g)]; why = T('как в прошлый раз', 'as last time') }
     else { for (const [re, o] of IMP_NAME_RULES) if (g.name && re.test(g.name)) { op = o; why = T('по имени слоя', 'by layer name'); break } }
     if (!op) {
-      if (!g.stroke && g.fill) { op = 'fill'; why = T('заливка без контура', 'fill without outline') }
+      if (!g.stroke && g.fill && isWhiteish(fc)) { op = 'skip'; why = T('белая заливка (фон или маска)', 'white fill (background or mask)') }
+      else if (!g.stroke && g.fill) { op = 'fill'; why = T('заливка без контура', 'fill without outline') }
       else if (isRedish(sc)) { op = 'cut'; why = T('красная линия', 'red line') }
       else if (isBlueish(sc)) { op = 'mark'; why = T('синяя линия', 'blue line') }
       else if (g.fill && isDark(fc)) { op = 'fill'; why = T('тёмная заливка', 'dark fill') }

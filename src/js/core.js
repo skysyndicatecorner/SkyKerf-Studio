@@ -5,7 +5,7 @@
    named undo/redo history, serialization + migration, assets, dialogs
    ============================================================================ */
 const APP_NAME = 'SkyKerf_Studio';
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 const FORMAT_VERSION = 3;
 
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -128,6 +128,7 @@ const ICON = {
   info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.2v.3"/>',
   warn: '<path d="M10 3l7.5 13h-15z"/><path d="M10 8v4M10 14.2v.3"/>',
   check: '<path d="M4 10.5l4 4 8-9"/>',
+  clock: '<circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.5 2"/>',
   device: '<rect x="3" y="5" width="14" height="9" rx="1.5"/><path d="M7 17h6M10 14v3"/><circle cx="6" cy="9.5" r="1"/>',
   menu: '<path d="M4 6h12M4 10h12M4 14h12"/>',
   rotl: '<path d="M6 4L3 7l3 3"/><path d="M3.5 7H11a5 5 0 010 10H8"/>',
@@ -143,6 +144,9 @@ const ic = (k, s = 18) => `<svg viewBox="0 0 20 20" width="${s}" height="${s}" f
 /* ============================== machine profiles ==============================
    Fields follow appendix A of the spec. Values that cannot be known for a generic
    preset (laser wattage, real travel, accelerations) stay null = "unknown". */
+/* built-in profile names shown in Russian (the stored name stays as it is, so old projects still match) */
+const MACH_RU = { 'Diode laser 10 W (generic)': 'Диодный лазер 10 Вт (типовой)', 'Diode laser 20 W (generic)': 'Диодный лазер 20 Вт (типовой)', 'CO2 laser 50 W (generic)': 'CO2-лазер 50 Вт (типовой)', 'CNC 3018 (generic)': 'Фрезер 3018 (типовой)', 'CNC router 6060 (generic)': 'Фрезер 6060 (типовой)' };
+const machName = m => (lang === 'ru' && m && MACH_RU[m.name]) || (m && m.name) || '';
 const MACHINES = [
   { id: 'diode10', type: 'laser', name: 'Diode laser 10 W (generic)', maker: null, w: 400, h: 400, origin: 'bl', laserSource: 'diode', watts: 10, smax: 1000, dynamic: true, air: true, hasZ: false, pwm: false, rapid: 6000, maxFeed: 6000, accel: 1000, safeZ: 0, rpm: 0, fw: 'grbl', post: 'grbl_laser' },
   { id: 'diode20', type: 'laser', name: 'Diode laser 20 W (generic)', maker: null, w: 400, h: 400, origin: 'bl', laserSource: 'diode', watts: 20, smax: 1000, dynamic: true, air: true, hasZ: false, pwm: false, rapid: 9000, maxFeed: 9000, accel: 1500, safeZ: 0, rpm: 0, fw: 'grbl', post: 'grbl_laser' },
@@ -192,7 +196,7 @@ function blankState(machine, sheetOpts) {
     nest: { mode: 'multi', spacing: 3, rot: 90, mirror: false, goal: 'sheets', res: 0, kerf: true },
     job: { innerFirst: true, engraveFirst: true, header: '', footer: '', joinTol: .05, stamp: true },
     nextId: 1, nextG: 1, snap: 1, snapOn: true,
-    macros: [{ n: 'Home', g: '$H' }, { n: 'Unlock', g: '$X' }, { n: T('Настройки', 'Settings'), g: '$$' }, { n: T('Парковка', 'Park'), g: 'G90 G0 X0 Y0' }],
+    macros: [{ n: T('Поиск нуля', 'Home'), g: '$H' }, { n: T('Разблокировать', 'Unlock'), g: '$X' }, { n: T('Настройки', 'Settings'), g: '$$' }, { n: T('Парковка', 'Park'), g: 'G90 G0 X0 Y0' }],
   };
 }
 
@@ -310,7 +314,9 @@ function normalizeProject(j) {
 
 /* ============================== UI primitives ============================== */
 let toastT = 0;
-function toast(t, kind) { const e = $('#toast'); if (!e) return; e.textContent = t; e.className = 'toast' + (kind ? ' ' + kind : ''); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, kind === 'err' ? 6000 : 3800) }
+function toast(t, kind, acts) { const e = $('#toast'); if (!e) return; e.textContent = t; if (acts && acts.length) { const w = document.createElement('span'); w.className = 'tacts'; for (const a of acts) { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = a.label; b.dataset.act = a.act; if (a.v != null) b.dataset.v = a.v; w.appendChild(b) } e.appendChild(w) } e.className = 'toast' + (kind ? ' ' + kind : ''); e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => e.hidden = true, acts && acts.length ? 9000 : kind === 'err' ? 6000 : 3800) }
+/* Russian plural: plural(5, 'лист', 'листа', 'листов') → 'листов' */
+function plural(n, one, few, many) { n = Math.abs(n) % 100; const d = n % 10; return n > 10 && n < 20 ? many : d === 1 ? one : d >= 2 && d <= 4 ? few : many }
 let onModalClose = null;
 function openModal(title, body, foot, cls) { const d = $('#dialog'); d.className = 'dialog' + (cls ? ' ' + cls : ''); d.innerHTML = `<header><h2>${title}</h2><button class="icon-btn" data-act="closeModal" aria-label="${T('Закрыть', 'Close')}">✕</button></header><div class="body">${body}</div>${foot != null ? `<footer>${foot}</footer>` : ''}`; $('#modal').hidden = false; const f = d.querySelector('[autofocus]'); if (f) setTimeout(() => f.focus(), 30) }
 function closeModal() { $('#modal').hidden = true; if (onModalClose) { const f = onModalClose; onModalClose = null; f() } }

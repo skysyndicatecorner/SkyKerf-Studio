@@ -32,6 +32,7 @@ async function doAct(act, v, a, e) {
     case 'help': openHelp(); break; case 'helpTab': openHelp(v); break;
     case 'theme': { const r = document.documentElement, cur = r.dataset.theme || 'system', nx = { system: 'light', light: 'dark', dark: 'system' }[cur]; if (nx === 'system') delete r.dataset.theme; else r.dataset.theme = nx; store.set('theme', nx); prevCache.clear(); renderTop(); draw(); break }
     case 'undo': undo(); break; case 'redo': redo(); break;
+    case 'nestRedo': if (LASTPLACE) { $('#toast').hidden = true; undo(); placeParts(LASTPLACE.parts, Object.assign({}, LASTPLACE.opts, { dialog: true })) } break;
     case 'closeModal': closeModal(); break;
     case 'fit': fitPlate(curPlate); draw(); renderStatus(); break; case 'fitAll': fitAll(); draw(); renderStatus(); break;
     case 'zin': zoomAt(CW / 2, CH / 2, 1.25); break; case 'zout': zoomAt(CW / 2, CH / 2, .8); break;
@@ -42,6 +43,8 @@ async function doAct(act, v, a, e) {
     case 'npMach': readNP(); NP.m = v; NP.mat = null; NP.thick = null; renderNewProject(); break;
     case 'npSheet': readNP(); NP.sheet = +v; renderNewProject(); break;
     case 'npCreate': createProject(); break;
+    case 'npSample': { store.set('welcomed', '1'); readNP(); const simple = NP.simple; closeModal(); pushUndo(T('Пример', 'Sample')); await loadSample(); setMode(simple ? 'simple' : 'pro'); sel.clear(); curPlate = 0; changed(); fitPlate(0); draw(); toast(T('Это пример. Новый проект — «Меню → Новый проект».', 'This is a sample. New project: Menu → New project.')); break }
+    case 'openSample': { pushUndo(T('Пример', 'Sample')); await loadSample(); sel.clear(); curPlate = 0; changed(); fitPlate(0); draw(); break }
     case 'preset': { const p = allMachineProfiles().find(p => p.id === v); if (p) { draftM = deepCopy(p); renderSettings() } break }
     case 'saveSettings': { const m = readSettings(); S.job.header = $('#mHead').value; S.job.footer = $('#mFoot').value; closeModal(); applyMachine(m, false); break }
     case 'saveMachineProfile': saveMachineProfile(); break;
@@ -137,6 +140,8 @@ async function doAct(act, v, a, e) {
       openFontPicker(cur, f => { if (p === 'data-topt') { toolOpt.font = f; toolOpt.weight = defaultWeight(f); renderRight() } else if (p === 'data-txt') { const s = selShapes()[0]; if (s && s.kind === 'text') updateText(Object.assign(textSpec(s), { font: f, weight: defaultWeight(f) })) } else if (GS) { GS.o[p.slice(3)] = f; renderGenSide(); genRegen() } }, a); break } case 'exCopy': exportCopy(); break;
     case 'exOpenFolder': if (EX && EX.saved && DESK && DESK.showItemInFolder) DESK.showItemInFolder(EX.saved); break;
     /* ---- machine ---- */
+    case 'sckGo': { const all = [...document.querySelectorAll('[data-sck]')]; if (!all.every(x => x.checked)) { toast(T('Отметьте все три пункта — это займёт пять секунд.', 'Tick all three items — it takes five seconds.')); break } if ($('#sckNever') && $('#sckNever').checked) MCOPT.checks = false; MC.checks = { a: true, b: true, c: true }; const o = MC.pendingStart || {}; closeModal(); jobStart(o); break }
+    case 'mcPlug': MC.mode = 'serial'; setState('offline'); refresh(); await doAct('mcConnect'); break;
     case 'mcMode': if (MC.connected && v !== 'serial') await serialDisconnect(); MC.mode = v; setState(v === 'demo' ? 'demo' : 'offline'); refresh(); if (v === 'serial') autoConnect(); break;
     case 'mcConnect': serialConnect(); break;
     case 'mDetect': detectDevice(); break;
@@ -215,7 +220,7 @@ function onChange(t) {
   if (t.id === 'rapChk') { P.rapids = t.checked; draw(); return } if (t.id === 'ghostChk') { P.ghost = t.checked; draw(); return } if (t.id === 'dirsChk') { P.dirs = t.checked; draw(); return } if (t.id === 'followChk') { P.follow = t.checked; return }
   if (d.chk) { MC.checks[d.chk] = t.checked; return }
   if (d.mcopt) { MCOPT[d.mcopt] = t.checked; if (d.mcopt === 'auto' && t.checked) autoConnect(); return }
-  if (d.mcf) { const v = numVal(t); if (v != null) MC.fire[d.mcf] = v; return }
+  if (d.mcf) { const v = numVal(t); if (v != null) { MC.fire[d.mcf] = v; if (d.mcf === 'power') store.set('mcFirePower', String(v)) } return }
   if (d.mcp) { const v = numVal(t); if (v != null) MC.probe[d.mcp] = v; return }
   if (d.gpopt) { GP.cfg[d.gpopt] = t.type === 'checkbox' ? t.checked : +t.value; gpSave(); return }
   if (t.id === 'fovR') { setFeedOverride(+t.value); return }
@@ -318,7 +323,8 @@ async function loadSample() {
   if (DESK && DESK.recovery) { try { recovery = await DESK.recovery() } catch (e) { } }
   const saved = store.get('project');
   if (saved) { try { const r = parseProject(saved); S = r.state; restored = true; migratedFrom = r.migratedFrom; if (r.migratedFrom) dirty = true } catch (e) { logError('restore', e) } }
-  if (!S) { await loadSample(); dirty = false }
+  // no saved project: an empty sheet (the sample opens from the menu); the very first launch asks three questions
+  if (!S) { S = blankState(MACHINES[0]); dirty = false; if (!store.get('welcomed')) setTimeout(() => { if ($('#modal').hidden) openWelcome() }, 300) }
   REVMAX = Math.max(REVMAX, S.rev | 0);
   document.body.classList.toggle('simple', mode === 'simple');
   resize(); refresh(); fitPlate(0); draw();

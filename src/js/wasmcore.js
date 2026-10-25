@@ -12,7 +12,7 @@ WK.whenReady = (async () => {
     if (typeof localStorage !== 'undefined') { try { if (localStorage.getItem('skykerf.noWasm') === '1') throw new Error('disabled in settings') } catch (e) { if (/disabled/.test(e.message)) throw e } }
     const bin = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
     const { instance } = await WebAssembly.instantiate(bin, {});
-    if (instance.exports.version() !== 3) throw new Error('kernel version mismatch');
+    if (instance.exports.version() !== 4) throw new Error('kernel version mismatch');
     WK.ex = instance.exports; WK.ready = true;
   } catch (e) { WK.err = e.message || String(e) }
   return WK.ready;

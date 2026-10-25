@@ -204,7 +204,8 @@ async function nestRun() {
   const usedPlates = new Set(res.place.filter(Boolean).map(p => p.plate)).size;
   NS.variants.push({ opts: Object.assign({}, opts, { obstacles: null, sheets: null }), res, parts, usedPlates }); if (NS.variants.length > 6) NS.variants.shift();
   NS.cur = NS.variants.length - 1; $('#nestApplyBtn').disabled = false;
-  $('#nestBadge').textContent = `${T('Вариант', 'Variant')} ${String.fromCharCode(65 + NS.cur)}: ${usedPlates} ${T('лист(ов)', 'sheet(s)')}, ${Math.round(res.usage * 100)}% · ${T('не размещено', 'not placed')}: ${res.unplaced.length}`;
+  if (NS.source.auto && NS.variants.length === 1) { if (!res.unplaced.length && res.sheets.length === S.sheets.length) { NS.quick = true; await nestApply(); return } $('#modal').hidden = false }
+  $('#nestBadge').textContent = `${T('Вариант', 'Variant')} ${String.fromCharCode(65 + NS.cur)}: ${usedPlates} ${T(plural(usedPlates, 'лист', 'листа', 'листов'), usedPlates === 1 ? 'sheet' : 'sheets')}, ${Math.round(res.usage * 100)}% · ${T('не размещено', 'not placed')}: ${res.unplaced.length}`;
   renderNestSide(); nestDraw();
 }
 function kerfAllowance() { const L = S.layers.find(l => l.type === 'cut'); if (!L) return 0; const r = isLaser() ? resolveLaser(L, sheetAt(curPlate)) : null; return isLaser() ? (r.kerf || 0) : 0 }
@@ -263,7 +264,8 @@ async function nestApply() {
   }
   sel = ids; const first = v.res.place.find(Boolean); if (first) curPlate = first.plate;
   const n = v.parts.length - unplacedIdx.size;
-  closeModal(); changed(); fitPlate(curPlate); draw();
+  const quick = NS && NS.quick; closeModal(); changed(); fitPlate(curPlate); draw();
+  if (quick) { toast(T(`Добавлено: ${n} ${plural(n, 'деталь', 'детали', 'деталей')}` + (v.usedPlates > 1 ? `, листов: ${v.usedPlates}.` : '.'), `Added ${n} part${n === 1 ? '' : 's'}` + (v.usedPlates > 1 ? `, sheets: ${v.usedPlates}.` : '.')), '', [{ label: T('Отменить', 'Undo'), act: 'undo' }, { label: T('Раскладка…', 'Layout…'), act: 'nestRedo' }]); return }
   toast(T(`Размещено: ${n} из ${v.parts.length}. Листов: ${v.usedPlates}, заполнение ≈ ${Math.round(v.res.usage * 100)}%.`, `Placed ${n} of ${v.parts.length}. Sheets: ${v.usedPlates}, ≈ ${Math.round(v.res.usage * 100)}% used.`) + (unplacedIdx.size ? T(` Не размещено: ${unplacedIdx.size} — они в зоне «Неразмещённые».`, ` Not placed: ${unplacedIdx.size} — see the “Unplaced” area.`) : ''));
 }
 function manualPlace(parts, src) {
@@ -283,7 +285,15 @@ function manualPlace(parts, src) {
 /* Entry point used by generators, slicer and importers (spec 4: one shared subsystem). */
 /* opts.exclude: ids of shapes that the caller will remove in onApply (old version of a
    regenerated product, the original of a split part) — they must not block the layout. */
-function placeParts(parts, opts) { opts = opts || {}; openNest({ kind: 'new', parts, title: opts.title, onApply: opts.onApply, exclude: opts.exclude }) }
+let LASTPLACE = null;
+/* When the parts fit on the existing sheets, they are placed at once (no dialog) and a toast offers Undo / Adjust.
+   The dialog opens when something does not fit, when the user asks for it, or when quick placement is off. */
+function placeParts(parts, opts) {
+  opts = opts || {}; LASTPLACE = { parts: deepCopy(parts), opts: Object.assign({}, opts) };
+  const auto = !opts.dialog && store.get('nestAuto') !== '0' && S.nest.mode !== 'manual';
+  openNest({ kind: 'new', parts, title: opts.title, onApply: opts.onApply, exclude: opts.exclude, auto });
+  if (auto) $('#modal').hidden = true; // computed silently; shown only if the parts do not fit
+}
 function movingIds() { if (!NS) return new Set(); const src = NS.source; return src.kind === 'existing' ? new Set(src.units.flat().map(s => s.id)) : new Set(src.exclude || []) }
 function nestExisting() {
   let pool = selShapes().filter(s => !s.lock);

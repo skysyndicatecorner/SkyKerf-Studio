@@ -12,6 +12,10 @@
 
 ![SkyKerf_Studio](build/icon.png)
 
+## Что нового в 0.4.1
+
+Исправлена многослойная картина (полосы и обрезки из-за модуля на Rust), сохраняется прозрачность картинок, «Стоп» сбрасывает станок только после полной остановки, все карточки вкладки «Станок» доступны на любом экране. Для новичков: окно первого запуска, простой режим по умолчанию, вкладки по-русски, раскладка без лишнего окна, блок «Готово к запуску?» и короткий список «Перед запуском». Новый значок. Подробно — в [CHANGELOG.md](CHANGELOG.md).
+
 ## Что нового в 0.4.0
 
 - **Станок:** работающий тест луча, понятные объяснения ошибок и аварий, «Стоп» без аварии и отдельная аварийная кнопка, автоподключение, большой вид стола с панелью функций снизу, управление с геймпада, удаление своих профилей.
@@ -134,6 +138,7 @@ tests/                  модульные тесты (node --test)
 
 **SkyKerf_Studio** (formerly Kerf Studio) is an MIT-licensed CAD/CAM app for laser engravers/cutters and CNC routers: drawing on real sheets with no-go zones, one shared nesting engine (one sheet / several sheets / current sheet / manual, with reports and saved variants), postprocessor-based G-code export with validation and production packages, explicit laser process types and kerf compensation, a material library with verification statuses and per-machine values, drag-and-drop import (SVG, DXF, PNG, JPEG, BMP, WebP, TIFF, STL, OBJ, G-code) with colour tracing, system fonts and text on an arc, parametric buildings and boxes with fit profiles, 3D relief for routers, and GRBL machine control with read-only controller detection.
 
+- **New in 0.4.1:** layered picture fixed (stripes and slivers from the Rust blur), transparency kept, Stop resets only after a full stop, every machine card reachable on any screen; first-run welcome, simple mode by default, plain-word tabs, quick placement, a “Ready to run?” block and a short pre-start checklist; a new icon.
 - **New in 0.4.0:** working test fire, explained GRBL errors and alarms, a stop that keeps position plus a separate emergency stop, auto-connect, a large bed view with a bottom tool dock, gamepad control; router Z strategies (incl. acrylic) and a combined laser + router mode; colours and layers kept on import from CorelDRAW, Inkscape, DXF, PDF, PLT and LightBurn; G-code back to SVG/DXF/PNG; layered house pictures, dollhouses, doll furniture and a Tinkercad / Tiny Glade-style constructor; boxes, statuettes and medals, toys; Rust/WebAssembly kernels for speed.
 - **New in 0.3.1:** a house generator with 14 styles × 8 uses (tea house, box, organizer, piggy bank, birdhouse, feeder, lantern; two can be combined) and every detail adjustable; photo frames and signs with many shapes, borders, corners and any installed font; import of CorelDRAW CDR (v6–X8+), PDF / PDF-compatible AI, HPGL/PLT, LightBurn and SVGZ (see [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md)); passes and other values can be overridden in auto mode; all fonts on the computer; laser-only / router-only badges; fixed context menu on Windows and the power test.
 - **Download:** Releases — Windows installer/portable `.exe`, Linux `.AppImage`/`.deb`.

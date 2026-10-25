@@ -96,59 +96,7 @@ const GENS = {
       };
     }
   },
-  layered: {
-    icon: 'layers', name: () => T('Многослойная картина', 'Layered picture'), desc: () => T('Картинка → 1–10 слоёв по яркости', 'Picture → 1–10 depth layers'),
-    fields: [
-      { k: 'imgAsset', t: 'img', l: () => T('Изображение', 'Image') },
-      { k: 'N', t: 'num', l: () => T('Слоёв', 'Layers'), def: () => 5, min: 1, max: 10, step: 1 },
-      { k: 'W', t: 'num', l: () => T('Ширина картины', 'Picture width'), def: () => Math.min(180, Math.round(sheetAt(curPlate).w * .8)), min: 20, u: MM, step: 1 },
-      { k: 'frame', t: 'num', l: () => T('Рамка', 'Frame'), def: () => 10, min: 0, u: MM, step: 1 },
-      { k: 'near', t: 'sel', l: () => T('Ближе к зрителю', 'Closer to viewer'), def: () => 'dark', opts: () => [['dark', T('тёмные области', 'dark areas')], ['light', T('светлые области', 'light areas')]] },
-      { k: 'dist', t: 'sel', l: () => T('Деление яркости', 'Level split'), def: () => 'hist', opts: () => [['hist', T('по гистограмме', 'by histogram')], ['equal', T('равными шагами', 'equal steps')]] },
-      { k: 'smooth', t: 'num', l: () => T('Сглаживание', 'Smoothing'), def: () => 2, min: 0, max: 12, step: 1, u: () => 'px' },
-      { k: 'minA', t: 'num', l: () => T('Мин. деталь', 'Min detail'), def: () => 8, min: 0, u: () => MM() + '²', step: 1, pro: true },
-      { k: 'holes', t: 'chk', l: () => T('Отверстия для штифтов в углах', 'Corner alignment holes'), def: () => true },
-      { k: 'hd', t: 'num', l: () => T('Диаметр отверстий', 'Hole diameter'), def: () => 3, min: 1, u: MM, step: .5, show: o => o.holes },
-      { k: 'nums', t: 'chk', l: () => T('Гравировать номер слоя', 'Engrave layer numbers'), def: () => true },
-    ],
-    async make(o) {
-      if (!o.imgAsset) o.imgAsset = addAsset(sampleLandscape());
-      const img = await imgFromAsset(o.imgAsset), iw = img.naturalWidth, ih = img.naturalHeight;
-      const N = clamp(o.N | 0, 1, 10), Wmm = o.W, Hmm = Wmm * ih / iw, pw = Math.round(clamp(Wmm * 4, 200, 720)), ph = Math.max(2, Math.round(pw * ih / iw)), k = Wmm / pw;
-      const c = document.createElement('canvas'); c.width = pw; c.height = ph; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, pw, ph); x.drawImage(img, 0, 0, pw, ph);
-      const d = x.getImageData(0, 0, pw, ph).data; let Lm = new Float32Array(pw * ph); for (let i = 0; i < Lm.length; i++)Lm[i] = .299 * d[i * 4] + .587 * d[i * 4 + 1] + .114 * d[i * 4 + 2];
-      const r = o.smooth | 0; if (r > 0) for (let pass = 0; pass < 2; pass++) {
-        const tt = new Float32Array(Lm.length);
-        for (let y = 0; y < ph; y++) { let s = 0, n = 0; for (let xx = -r; xx <= r; xx++) { if (xx >= 0 && xx < pw) { s += Lm[y * pw + xx]; n++ } } for (let xx = 0; xx < pw; xx++) { tt[y * pw + xx] = s / n; const a = xx - r, b = xx + r + 1; if (a >= 0) { s -= Lm[y * pw + a]; n-- } if (b < pw) { s += Lm[y * pw + b]; n++ } } }
-        for (let xx = 0; xx < pw; xx++) { let s = 0, n = 0; for (let yy = -r; yy <= r; yy++) { if (yy >= 0 && yy < ph) { s += tt[yy * pw + xx]; n++ } } for (let yy = 0; yy < ph; yy++) { Lm[yy * pw + xx] = s / n; const a = yy - r, b = yy + r + 1; if (a >= 0) { s -= tt[a * pw + xx]; n-- } if (b < ph) { s += tt[b * pw + xx]; n++ } } }
-      }
-      let th = []; if (o.dist === 'equal') for (let q = 1; q < N; q++)th.push(255 * q / N); else { const srt = Float32Array.from(Lm).sort(); for (let q = 1; q < N; q++)th.push(srt[Math.floor(srt.length * q / N)]) }
-      const fpx = o.frame / k, Dm = new Uint8Array(pw * ph);
-      for (let y = 0; y < ph; y++)for (let xx = 0; xx < pw; xx++) { const i = y * pw + xx; let lv = 0; for (const tq of th) if (Lm[i] >= tq) lv++; let dd = o.near === 'dark' ? N - 1 - lv : lv; if (xx < fpx || y < fpx || xx >= pw - fpx || y >= ph - fpx) dd = N - 1; Dm[i] = dd }
-      const parts = [], minPx = (o.minA || 0) / (k * k), hr = o.hd / 2, holeC = o.holes && o.frame >= o.hd + 2 ? [[o.frame / 2, o.frame / 2], [Wmm - o.frame / 2, o.frame / 2], [Wmm - o.frame / 2, Hmm - o.frame / 2], [o.frame / 2, Hmm - o.frame / 2]] : [];
-      const t = curThick();
-      for (let j = 0; j < N; j++) {
-        const m = new Uint8Array(pw * ph); for (let i = 0; i < m.length; i++)m[i] = Dm[i] >= j ? 1 : 0;
-        let loops = traceMask(m, pw, ph).map(l => rdpClosed(l, .7)).filter(l => l.length > 2 && Math.abs(area(l)) > Math.max(4, minPx));
-        loops = cleanPaths(loops.map(l => l.map(([X, Y]) => [X * k, (ph - Y) * k])));
-        for (const [hx, hy] of holeC) loops.push(ellipsePts(hx, hy, hr, hr, 32));
-        const items = [{ layer: CUT, kind: 'part', paths: loops, closed: true }];
-        if (o.nums && o.frame >= 4) { const tp = await textAt(String(j + 1), 'mono', Math.min(o.frame * .55, 5), Wmm / 2, o.frame / 2); if (tp.length) items.push({ layer: markLayer(), kind: 'text', paths: tp, closed: true, extra: { text: String(j + 1), font: 'mono', size: Math.min(o.frame * .55, 5), rot: 0 } }) }
-        parts.push({ name: T(`Слой ${j + 1} из ${N}`, `Layer ${j + 1} of ${N}`), items, req: curReq(t), z: j })
-      }
-      return {
-        parts, depth: { D: Dm, pw, ph, N }, info: T(`${N} слоёв · ${fx(Wmm, 0)}×${fx(Hmm, 0)} мм · высота стопки ${fx(N * t, 1)} мм`, `${N} layers · ${fx(Wmm, 0)}×${fx(Hmm, 0)} mm · stack height ${fx(N * t, 1)} mm`),
-        steps: [T('Слой 1 — задний (сплошной), далее по номерам к зрителю.', 'Layer 1 is the solid back; stack the rest in order towards the viewer.'), holeC.length ? T(`Совместите слои штифтами ⌀${o.hd} мм × ${fx(N * t, 1)} мм (4 шт.) и склейте.`, `Align layers with ⌀${o.hd} × ${fx(N * t, 1)} mm pins (4 pcs) and glue.`) : T('Совместите слои по рамке и склейте.', 'Align layers by the frame and glue.')],
-        bom: [T('Для объёма можно добавить проставки 2–3 мм между слоями.', 'For extra depth add 2–3 mm spacers between layers.')],
-        asm: parts.map((p, j) => ({ paths: p.items[0].paths, origin: [0, 0, j * t], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1], t, color: hslHex(30 + j * (180 / Math.max(1, N - 1)), 45, 70 - j * (35 / Math.max(1, N))) }))
-      };
-    },
-    preview(c, W, H, res) {
-      const { D, pw, ph, N } = res.depth, s = Math.min((W - 40) / pw, (H - 40) / ph), ox = (W - pw * s) / 2, oy = (H - ph * s) / 2, cc = document.createElement('canvas'); cc.width = pw; cc.height = ph; const x = cc.getContext('2d'), id = x.createImageData(pw, ph);
-      for (let i = 0; i < D.length; i++) { const t = N > 1 ? D[i] / (N - 1) : 1; const [r, g, b] = hslRgb((30 + t * 180) / 360, .45, (70 - t * 35) / 100); id.data[i * 4] = r; id.data[i * 4 + 1] = g; id.data[i * 4 + 2] = b; id.data[i * 4 + 3] = 255 }
-      x.putImageData(id, 0, 0); c.imageSmoothingEnabled = false; c.drawImage(cc, ox, oy, pw * s, ph * s); c.strokeStyle = css('--line-2'); c.strokeRect(ox + .5, oy + .5, pw * s, ph * s)
-    }
-  },
+  // layered picture: see layered.js
   frame: {
     icon: 'frame', name: () => T('Рамка для фото', 'Photo frame'), desc: () => T('Окно, задник, подставка', 'Window, back, stand'),
     fields: [
@@ -367,7 +315,7 @@ function genRegen() {
     if (GS !== my) return; const info = $('#genInfo'); info.textContent = my.err ? '⚠ ' + my.err : my.res.info;
     $('#genRes').innerHTML = my.res ? [`<b>${T('Деталей', 'Parts')}: ${my.res.parts.length}</b>`, ...(my.res.steps || []).map((s, i) => `${i + 1}. ${esc(s)}`), ...(my.res.bom || []).map(esc), ...(my.mjWarn || []).map(w => `<span class="warnline">${esc(w)}</span>`)].map(x => `<div>${x}</div>`).join('') : '';
     if (my.g.manualJoints && $('#genSide')) { const box = $('#genSide').querySelector('.mjwrap'); if (box) box.outerHTML = `<div class="mjwrap">${mjSideHtml()}</div>` }
-    $('#genNote').textContent = T('Дальше откроется раскладка: один лист, несколько листов или только текущий.', 'Nesting opens next: one sheet, several sheets or the current one.');
+    $('#genNote').textContent = T('Детали лягут на лист сами; если не поместятся — откроется раскладка.', 'Parts go onto the sheet by themselves; if they do not fit, the layout window opens.');
     renderGenVb(); genDraw()
   }, 180)
 }
@@ -380,7 +328,8 @@ function genDraw() {
   if (!GS.res) return; if (GS.g.preview) { GS.g.preview(c, r.width, r.height, GS.res); return }
   const parts = GS.res.parts, gap = 6, boxes = parts.map(p => bboxOf(p.items.flatMap(i => i.paths))); let tot = 0; boxes.forEach(b => tot += (b[2] - b[0] + gap) * (b[3] - b[1] + gap)); const target = Math.sqrt(tot) * 1.4;
   let x = 0, y = 0, rh = 0, pos = [], mw = 0; boxes.forEach(b => { const w = b[2] - b[0], h = b[3] - b[1]; if (x > 0 && x + w > target) { x = 0; y += rh + gap; rh = 0 } pos.push([x - b[0], y - b[1]]); x += w + gap; rh = Math.max(rh, h); mw = Math.max(mw, x) }); const th = y + rh;
-  const s = Math.min((r.width - 48) / mw, (r.height - 80) / th), ox = (r.width - mw * s) / 2, oy = (r.height - th * s) / 2 + th * s;
+  // keep clear of the floating view buttons (top) and the info line (bottom)
+  const padT = 64, padB = 52, s = Math.min((r.width - 48) / mw, (r.height - padT - padB) / th), ox = (r.width - mw * s) / 2, oy = padT + (r.height - padT - padB - th * s) / 2 + th * s;
   GS.layout = { pos, s, ox, oy, boxes };
   parts.forEach((p, i) => {
     for (const it of p.items) {

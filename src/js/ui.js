@@ -66,10 +66,11 @@ function generateNow() {
 function renderTop() {
   document.documentElement.lang = lang; document.title = APP_NAME + (S.name ? ' — ' + S.name : '');
   const m = S.machine, u = undoLabel(), r = redoLabel();
-  $('#deviceBtn').innerHTML = `<span class="dev-ic">${ic(isLaser() ? 'laser' : 'cnc', 18)}</span><span class="dev-txt"><b>${esc(m.name)}</b><small>${m.w}×${m.h} ${MM()} · ${isLaser() ? T('лазер', 'laser') : T('фрезер', 'router')}${m.confirmed === false ? ' · ' + T('черновик', 'draft') : ''}</small></span>${ic('chev', 14)}`;
+  $('#deviceBtn').innerHTML = `<span class="dev-ic">${ic(isLaser() ? 'laser' : 'cnc', 18)}</span><span class="dev-txt"><b>${esc(machName(m))}</b><small>${m.w}×${m.h} ${MM()} · ${isLaser() ? T('лазер', 'laser') : T('фрезер', 'router')}${m.confirmed === false ? ' · ' + T('черновик', 'draft') : ''}</small></span>${ic('chev', 14)}`;
   $('#deviceBtn').title = T('Профиль станка и настройки', 'Machine profile and settings');
   $('#modeSeg').innerHTML = `<button data-mode="simple" aria-pressed="${mode === 'simple'}" title="${T('Простой режим: мастера, материалы, минимум настроек', 'Simple mode: wizards, materials, fewer settings')}">${T('Простой', 'Simple')}</button><button data-mode="pro" aria-pressed="${mode === 'pro'}" title="${T('Профессиональный режим: все параметры', 'Pro mode: every parameter')}">${T('Про', 'Pro')}</button>`;
-  const tabs = [['cad', 'CAD', T('Чертёж', 'Design')], ['cam', 'CAM', T('Траектории', 'Toolpaths')], ['gcode', 'G-code', T('Проверка', 'Preview')], ['machine', T('Станок', 'Machine'), T('Управление', 'Control')]];
+  // Russian: plain words first, the industry terms underneath (pros still find CAD/CAM/G-code)
+  const tabs = [['cad', T('Рисунок', 'CAD'), T('CAD · чертёж', 'Design')], ['cam', T('Обработка', 'CAM'), T('CAM · режимы реза', 'Toolpaths')], ['gcode', T('Проверка', 'G-code'), T('G-code · симуляция', 'Preview')], ['machine', T('Станок', 'Machine'), T('управление', 'Control')]];
   $('#tabs').innerHTML = tabs.map(([id, a, b], i) => `<button role="tab" data-tab="${id}" aria-selected="${tab === id}" title="Ctrl+${i + 1}"><i>${i + 1}</i><span><b>${a}</b><small>${b}</small></span></button>`).join('');
   $('#hist').innerHTML = `<button class="icon-btn" data-act="undo" ${u ? '' : 'disabled'} title="${u ? esc(T('Отменить: ', 'Undo: ') + u) : T('Нечего отменять', 'Nothing to undo')} (Ctrl+Z)" aria-label="${T('Отменить', 'Undo')}">${ic('undo')}</button><button class="icon-btn" data-act="redo" ${r ? '' : 'disabled'} title="${r ? esc(T('Повторить: ', 'Redo: ') + r) : T('Нечего повторять', 'Nothing to redo')} (Ctrl+Y)" aria-label="${T('Повторить', 'Redo')}">${ic('redo')}</button>`;
   $$('#langSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.lang === lang));
@@ -138,7 +139,9 @@ function matOptions(type, cur) {
 
 /* ============================== LEFT PANE ============================== */
 const WIZ = () => [['building', 'house'], ['dollhouse', 'chair'], ['box', 'box'], ['boxkit', 'book'], ['slicer', 'slices'], ['layered', 'layers'], ['awards', 'medal'], ['toys', 'toy'], ['frame', 'frame'], ['sign', 'sign'], ['puzzle', 'puzzle'], ['gear', 'gear'], ['qr', 'qr'], ['hinge', 'hinge'], ['tests', 'test'], ['relief', 'relief']];
-function wizName(k) { if (k === 'tests') return [T('Тесты и калибровка', 'Tests & calibration'), T('Мощность, фокус, шаг строк, рез, посадка, подача', 'Power, focus, interval, kerf, fit, feed')]; if (k === 'slicer') return [T('3D-модель → слои', '3D model → layers'), T('STL/OBJ: стопка или решётка, штифты', 'STL/OBJ: stacked or interlocked, dowels')]; if (k === 'relief') return [T('3D-рельеф из фото', '3D relief from a photo'), T('Фрезер: черновая и чистовая', 'Router: roughing and finishing')]; const g = GENS[k]; return [g.name(), g.desc()] }
+function wizName(k) { if (k === 'tests') return [T('Тесты и калибровка', 'Tests & calibration'), T('Мощность, фокус, шаг строк, рез, посадка, подача', 'Power, focus, interval, kerf, fit, feed')]; if (k === 'slicer') return [T('3D-модель → слои', '3D model → layers'), T('STL/OBJ: стопка или решётка, штифты', 'STL/OBJ: stacked or interlocked, dowels')]; if (k === 'relief') return [T('3D-рельеф из фото', '3D relief from a photo'), T('Фрезер: черновая и чистовая', 'Router: roughing and finishing')]; const g = GENS[k], short = WIZ_SHORT()[k]; return [short || g.name(), g.desc()] }
+/* shorter card titles: long Russian words must not be cut in the middle in a narrow card */
+const WIZ_SHORT = () => ({ layered: T('Слоистая картина', 'Layered picture'), boxkit: T('Коробки и шкатулки', 'Boxes & caskets'), box: T('Коробка на шипах', 'Finger-joint box'), awards: T('Статуэтки и медали', 'Awards & ornaments'), toys: T('Игрушки', 'Toys'), slicer: T('3D-модель → слои', '3D model → layers') });
 /* Features tied to one machine type carry a badge in the bottom-right corner (laser or
    router icon). They stay clickable: on the other machine type a notice explains it and
    offers to switch. */
@@ -148,8 +151,8 @@ function needMachine(need, what) {
   if (!need || (need === 'laser') === isLaser()) return true;
   const list = allMachineProfiles().filter(m => m.type === need).slice(0, 4), kind = need === 'laser' ? T('лазерного станка', 'a laser machine') : T('фрезерного станка (ЧПУ)', 'a CNC router');
   confirmBox(`${ic(need === 'laser' ? 'laser' : 'cnc', 18)} ${need === 'laser' ? T('Функция для лазера', 'Laser feature') : T('Функция для фрезера', 'Router feature')}`,
-    T(`«${esc(what)}» работает только для ${kind}. Сейчас выбран «${esc(S.machine.name)}». Переключитесь на ${need === 'laser' ? 'лазер' : 'фрезер'}, чтобы использовать эту функцию.`, `“${esc(what)}” works only with ${kind}. The current machine is “${esc(S.machine.name)}”. Switch to a ${need === 'laser' ? 'laser' : 'router'} to use it.`),
-    list.map((m, i) => ({ label: T('Переключить: ', 'Switch to: ') + esc(m.name), value: m.id, primary: i === 0 })).concat([{ label: T('Настройки станка…', 'Machine settings…'), value: '#settings' }, { label: T('Отмена', 'Cancel'), value: null }])
+    T(`«${esc(what)}» работает только для ${kind}. Сейчас выбран «${esc(machName(S.machine))}». Переключитесь на ${need === 'laser' ? 'лазер' : 'фрезер'}, чтобы использовать эту функцию.`, `“${esc(what)}” works only with ${kind}. The current machine is “${esc(S.machine.name)}”. Switch to a ${need === 'laser' ? 'laser' : 'router'} to use it.`),
+    list.map((m, i) => ({ label: T('Переключить: ', 'Switch to: ') + esc(machName(m)), value: m.id, primary: i === 0 })).concat([{ label: T('Настройки станка…', 'Machine settings…'), value: '#settings' }, { label: T('Отмена', 'Cancel'), value: null }])
   ).then(v => { if (!v) return; if (v === '#settings') return openSettings(); const m = allMachineProfiles().find(x => x.id === v); if (m) applyMachine(m, false) });
   return false;
 }
@@ -435,7 +438,13 @@ function renderRightCam(el) {
 function renderRightGcode(el) {
   const st = P.stats, rep = P.report, jw = (!P.file && P.job && P.job.warn) || [];
   const items = rep ? rep.errors.map(e => ['e', e]).concat(rep.warns.map(e => ['w', e]), rep.infos.map(e => ['i', e])) : [];
-  el.innerHTML = `<div class="sec"><h3>${T('Сводка', 'Summary')}</h3>${st && P.moves.length ? `<div class="statgrid"><div class="stat big"><span>${T('Время (оценка)', 'Time (estimate)')}</span><b>${fmtTime(!P.file && P.est ? P.est.time : st.time)}</b></div>
+  // three facts a newcomer needs: how long, does it fit, any errors
+  const m = S.machine, fits = st && P.moves.length ? st.b[0] >= -.05 && st.b[1] >= -.05 && st.b[3] <= m.w + .05 && st.b[4] <= m.h + .05 : null, nerr = rep ? rep.errors.length : 0;
+  const ready = st && P.moves.length ? `<div class="sec ready"><h3>${T('Готово к запуску?', 'Ready to run?')}</h3>
+    <div class="rdy"><span>${ic('clock', 16)}</span><b>${T('Время', 'Time')} ≈ ${fmtTime(!P.file && P.est ? P.est.time : st.time)}</b></div>
+    <div class="rdy ${fits ? 'ok' : 'bad'}"><span>${ic(fits ? 'check' : 'warn', 16)}</span><b>${fits ? T('Помещается в рабочее поле', 'Fits the work area') : T('Выходит за рабочее поле станка', 'Goes outside the work area')}</b></div>
+    <div class="rdy ${nerr ? 'bad' : 'ok'}"><span>${ic(nerr ? 'warn' : 'check', 16)}</span><b>${nerr ? T(`Ошибок: ${nerr} — список ниже`, `${nerr} errors — see below`) : T('Ошибок нет', 'No errors')}</b></div></div>` : '';
+  el.innerHTML = ready + `<div class="sec pro"><h3>${T('Сводка', 'Summary')}</h3>${st && P.moves.length ? `<div class="statgrid"><div class="stat big"><span>${T('Время (оценка)', 'Time (estimate)')}</span><b>${fmtTime(!P.file && P.est ? P.est.time : st.time)}</b></div>
     <div class="stat"><span>${P.laser ? T('Прожиг', 'Burn') : T('Резание', 'Cutting')}</span><b>${fmtLen(st.cut)}</b></div><div class="stat"><span>${T('Холостые', 'Travel')}</span><b>${fmtLen(st.rapid)}</b></div>
     <div class="stat"><span>${T('Перемещений', 'Moves')}</span><b>${st.n.toLocaleString(lang)}</b></div><div class="stat"><span>${T('Строк', 'Lines')}</span><b>${P.lines.length.toLocaleString(lang)}</b></div></div>
     <div class="kv"><span>${T('Габарит X', 'Extent X')}</span><b>${fx(st.b[0], 1)} … ${fx(st.b[3], 1)} ${MM()}</b><span>${T('Габарит Y', 'Extent Y')}</span><b>${fx(st.b[1], 1)} … ${fx(st.b[4], 1)} ${MM()}</b>${P.laser ? '' : `<span>${T('Глубина Z', 'Depth Z')}</span><b>${fx(st.b[2], 2)} … ${fx(st.b[5], 2)} ${MM()}</b>`}</div>` : `<p class="note">${T('Нет G-code. Нарисуйте объекты и нажмите «Подготовить».', 'No G-code yet. Draw shapes and press “Prepare”.')}</p>`}</div>

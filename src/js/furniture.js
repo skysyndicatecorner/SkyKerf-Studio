@@ -23,7 +23,7 @@ GENS.furniture = {
     if (!hasClip()) throw new Error(T('Нужна библиотека Clipper — она не загрузилась.', 'The Clipper library did not load.'));
     const N = +o.scale || 16, f = (o.size || 100) / 100 / N, t = o.t, clr = fitValue(o), mk = markLayer();
     const list = o.set === 'one' ? Array(clamp(o.qty | 0, 1, 12)).fill(o.item) : FURN_SETS[o.set] || ['chair'];
-    const parts = [], asm = [], warn = new Set(); let ox = 0;
+    const parts = [], asm = [], warn = new Set(), groups3d = []; let ox = 0;
     const tw = len => clamp(len * .22, Math.max(1.6, t * 1.5), 10);
     const slot = (x, y, w, h) => rectPts(x - clr / 2, y - clr / 2, w + clr, h + clr);
     const cut = p => ({ layer: CUT, kind: 'part', paths: p, closed: true }), eng = p => ({ layer: mk, kind: 'part', paths: p, closed: false });
@@ -139,13 +139,19 @@ GENS.furniture = {
         case 'chest': size = await chest(R(900), R(500), R(520)); break;
       }
       if (size && Math.min(size[0], size[1]) < t * 5) warn.add(T(`«${(FURN_ITEMS().find(x => x[0] === kind) || [0, kind])[1]}» мельче пяти толщин материала — возьмите масштаб крупнее или материал тоньше.`, `“${(FURN_ITEMS().find(x => x[0] === kind) || [0, kind])[1]}” is smaller than five material thicknesses — use a larger scale or thinner stock.`));
+      // place each item by its real extent along X (the parts know their frames), so items never stand inside each other
+      let lo = Infinity, hi = -Infinity, top = 0; const mine = [];
       for (const q of P) {
         const items = [cut(q.paths)]; if (q.lines && q.lines.length) items.push(eng(q.lines));
         parts.push({ name: q.name, items, req: curReq(t) });
-        asm.push({ paths: q.paths, origin: [q.fr.origin[0] + ox, q.fr.origin[1], q.fr.origin[2]], u: q.fr.u, v: q.fr.v, n: q.fr.n, t, color: q.color });
+        const f = q.fr; for (const pth of q.paths) for (const [a, b] of pth) for (const k of [0, t]) { const x = f.origin[0] + f.u[0] * a + f.v[0] * b + f.n[0] * k, z = f.origin[2] + f.u[2] * a + f.v[2] * b + f.n[2] * k; if (x < lo) lo = x; if (x > hi) hi = x; if (z > top) top = z }
+        mine.push({ paths: q.paths, origin: [f.origin[0], f.origin[1], f.origin[2]], u: f.u, v: f.v, n: f.n, t, color: q.color });
       }
-      ox += (size ? size[0] : 50) + Math.max(10, t * 4);
+      if (!isFinite(lo)) { lo = 0; hi = size ? size[0] : 50 }
+      groups3d.push({ mine, lo, hi, top });
     }
+    // tall items stand at the back-left, low ones in front: nothing hides behind a wardrobe in the 3D view
+    groups3d.sort((a, b) => b.top - a.top); for (const g of groups3d) { for (const m of g.mine) { m.origin[0] += ox - g.lo; asm.push(m) } ox += (g.hi - g.lo) + Math.max(12, t * 5) }
     return { parts, asm, info: T(`${list.length} предм. · ${parts.length} деталей · масштаб 1:${N}`, `${list.length} items · ${parts.length} parts · scale 1:${N}`), steps: [T('Ножки и боковины вставляются язычками в пазы сидений и столешниц; царги проходят сквозь ножки. Задние стенки и дверцы шкафов приклейте.', 'Legs and sides go with their tabs into the slots of seats and tops; stretchers pass through the legs. Glue the cabinet backs and doors.')], bom: [...warn, T('Для мебели мельче 1:16 лучше фанера или картон 1–1,5 мм.', 'For furniture smaller than 1:16, 1–1.5 mm plywood or card works best.')] };
   }
 };

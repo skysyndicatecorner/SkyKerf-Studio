@@ -40,13 +40,15 @@ function createViewer(canvas){
  let pad=null;const host=canvas.parentElement;
  if(host&&!canvas.dataset.nopad){pad=document.createElement('div');pad.className='campad';
   const B=(a,t,h)=>`<button type="button" data-cam="${a}" title="${t}">${h}</button>`;
-  pad.innerHTML=`<div class="cp-grid">${B('up',T('Сдвинуть вверх','Move up'),'▲')}${B('left',T('Сдвинуть влево','Move left'),'◀')}${B('reset',T('Исходный вид (0)','Reset view (0)'),'⟲')}${B('right',T('Сдвинуть вправо','Move right'),'▶')}${B('down',T('Сдвинуть вниз','Move down'),'▼')}</div>
+  pad.innerHTML=`<button type="button" class="cp-fold" data-camfold="1" title="${T('Показать или спрятать кнопки камеры','Show or hide the camera buttons')}">${T('Камера','Camera')}</button><div class="cp-grid">${B('up',T('Сдвинуть вверх','Move up'),'▲')}${B('left',T('Сдвинуть влево','Move left'),'◀')}${B('reset',T('Исходный вид (0)','Reset view (0)'),'⟲')}${B('right',T('Сдвинуть вправо','Move right'),'▶')}${B('down',T('Сдвинуть вниз','Move down'),'▼')}</div>
    <div class="cp-col">${B('zin',T('Приблизить (+)','Zoom in (+)'),'+')}${B('zout',T('Отдалить (−)','Zoom out (−)'),'−')}</div>
    <div class="cp-col">${B('rl',T('Повернуть влево','Rotate left'),'↺')}${B('rr',T('Повернуть вправо','Rotate right'),'↻')}</div>
    <div class="cp-col">${B('tu',T('Наклон вверх','Tilt up'),'⤒')}${B('td',T('Наклон вниз','Tilt down'),'⤓')}</div>
    <div class="cp-views">${B('vFront',T('Спереди','Front'),T('Перед','Front'))}${B('vSide',T('Сбоку','Side'),T('Бок','Side'))}${B('vTop',T('Сверху','Top'),T('Верх','Top'))}${B('vIso',T('В изометрии','Isometric'),'3D')}</div>
    <small class="cp-hint">${T('ЛКМ — вращать · ПКМ/Shift — двигать · колесо — масштаб','Left drag — orbit · right drag/Shift — move · wheel — zoom')}</small>`;
   pad.addEventListener('pointerdown',e=>e.stopPropagation());
+  if(store.get('camPad')!=='open')pad.classList.add('folded');
+  pad.addEventListener('click',e=>{if(!e.target.closest('[data-camfold]'))return;const f=pad.classList.toggle('folded');store.set('camPad',f?'folded':'open')});
   let hold=0;const act=a=>{const st=40;({up:()=>panPx(0,-st),down:()=>panPx(0,st),left:()=>panPx(-st,0),right:()=>panPx(st,0),zin:()=>{dist=clamp(dist/1.2,5,60000)},zout:()=>{dist=clamp(dist*1.2,5,60000)},rl:()=>{yaw+=.12},rr:()=>{yaw-=.12},tu:()=>{pitch=clamp(pitch+.1,-1.45,1.5)},td:()=>{pitch=clamp(pitch-.1,-1.45,1.5)},reset:()=>api.reset(),vFront:()=>{yaw=-Math.PI/2;pitch=.05},vSide:()=>{yaw=0;pitch=.05},vTop:()=>{yaw=-Math.PI/2;pitch=1.49},vIso:()=>{yaw=-.9;pitch=.5}}[a]||(()=>{}))();req()};
   pad.addEventListener('pointerdown',e=>{const b=e.target.closest('[data-cam]');if(!b)return;e.preventDefault();act(b.dataset.cam);if(/^(up|down|left|right|zin|zout|rl|rr|tu|td)$/.test(b.dataset.cam)){clearInterval(hold);hold=setInterval(()=>act(b.dataset.cam),70)}});
   const stop=()=>clearInterval(hold);pad.addEventListener('pointerup',stop);pad.addEventListener('pointerleave',stop);
@@ -198,7 +200,7 @@ function openSlicer(){
  if(!SL.base){SL.base=sampleVase();SL.name=T('Ваза (пример)','Vase (sample)');SL.size=150}
  const sh0=sheetAt(curPlate),m0=matById(sh0.mat);SL.t=sh0.thick;if(!SL.fitTouched)SL.fit=fx(((m0&&m0.fit!=null)?m0.fit:.05)+.1,2);slPrepare();
  openModal(`${ic('slices',18)} ${T('3D-модель → слои','3D model → sheet parts')}`,`<div class="ws-view"><canvas id="slCv"></canvas><div class="float" id="slVb"></div><div class="badge" id="slInfo">…</div></div><div class="ws-side" id="slSide"></div>`,
-  `<p class="note">${T('Детали лягут на слой «Резка», номера и разметка — на «Разметку». Дальше откроется раскладка: один лист, несколько или текущий.','Parts go to the Cut layer; numbers and marks to Mark. Nesting opens next: one sheet, several or the current one.')}</p><button class="btn" data-act="closeModal">${T('Отмена','Cancel')}</button><button class="primary" data-act="slPlace">${ic('nest',15)} ${T('Разложить…','Nest…')}</button>`,'xl');
+  `<p class="note">${T('Детали лягут на слой «Резка», номера и разметка — на «Разметку». Если детали не поместятся на лист, откроется раскладка.','Parts go to the Cut layer; numbers and marks to Mark. If the parts do not fit on the sheet, the layout window opens.')}</p><button class="btn" data-act="closeModal">${T('Отмена','Cancel')}</button><button class="primary" data-act="slPlace">${ic('nest',15)} ${T('Разложить…','Nest…')}</button>`,'xl');
  onModalClose=()=>{if(SL.viewer){SL.viewer.dispose();SL.viewer=null}};
  SL.viewer=createViewer($('#slCv'));if(!SL.viewer)$('#slInfo').textContent=T('3D-просмотр недоступен (нет WebGL), но нарезка работает.','3D preview unavailable (no WebGL), slicing still works.');
  slRenderSide();slRefresh(true);

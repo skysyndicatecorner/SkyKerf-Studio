@@ -31,8 +31,16 @@ async function fileToImage(f) {
 /* Normalise any image to a JPEG/PNG data URL kept in the project (originals are preserved up to 2400 px). */
 function imageToAsset(im, max = 2400) {
   const sc = Math.min(1, max / Math.max(im.naturalWidth || im.width, im.naturalHeight || im.height)), w = Math.max(1, Math.round((im.naturalWidth || im.width) * sc)), h = Math.max(1, Math.round((im.naturalHeight || im.height) * sc));
-  const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(im, 0, 0, w, h);
-  return { id: addAsset(c.toDataURL('image/jpeg', .92)), w, h };
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, w, h);
+  // PNG for anything with transparency or few colours (logos, drawings: no JPEG blocks, alpha kept); JPEG for photos
+  const png = imageLooksGraphic(x, w, h);
+  if (!png) { x.globalCompositeOperation = 'destination-over'; x.fillStyle = '#fff'; x.fillRect(0, 0, w, h) }
+  return { id: addAsset(png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', .92)), w, h, png };
+}
+function imageLooksGraphic(x, w, h) {
+  const step = Math.max(1, Math.floor(Math.sqrt(w * h / 20000))), d = x.getImageData(0, 0, w, h).data, cols = new Set();
+  for (let y = 0; y < h; y += step) for (let xx = 0; xx < w; xx += step) { const i = (y * w + xx) * 4; if (d[i + 3] < 250) return true; if (cols.size <= 64) cols.add((d[i] >> 3) << 10 | (d[i + 1] >> 3) << 5 | d[i + 2] >> 3) }
+  return cols.size <= 64;
 }
 /* Process an image shape to a pw×ph darkness map (0 = no burn, 255 = full). */
 function processImage(s, pw, ph) {

@@ -73,7 +73,7 @@ async function exportSide(kind) {
 let NP = null;
 function allMachineProfiles() { return MACHINES.concat(userMachines()) }
 function openNewProject() { const mm = S.machine; NP = { m: allMachineProfiles().some(x => x.id === mm.id) ? mm.id : MACHINES[0].id, mat: null, thick: null, sheet: 2, w: 300, h: 200, name: '' }; renderNewProject() }
-function machineCards(curId, act) { return `<div class="presets">${allMachineProfiles().map(p => `<button class="preset${p.id === curId ? ' on' : ''}" data-act="${act}" data-v="${esc(p.id)}"><span class="row">${ic(p.type === 'laser' ? 'laser' : 'cnc', 16)}<b>${esc(p.name)}</b></span><small>${p.w}×${p.h} ${MM()}${p.builtin === false || !MACHINES.includes(p) ? ' · ' + T('мой', 'mine') : ''}</small></button>`).join('')}</div>` }
+function machineCards(curId, act, canDelete) { return `<div class="presets">${allMachineProfiles().map(p => { const mine = !MACHINES.includes(p); return `<div class="preset-wrap"><button class="preset${p.id === curId ? ' on' : ''}" data-act="${act}" data-v="${esc(p.id)}"><span class="row">${ic(p.type === 'laser' ? 'laser' : 'cnc', 16)}<b>${esc(p.name)}</b></span><small>${p.w}×${p.h} ${MM()}${mine ? ' · ' + T('мой', 'mine') : ''}</small></button>${mine && canDelete ? `<button class="mini del" data-act="delMachine" data-v="${esc(p.id)}" title="${T('Удалить профиль', 'Delete profile')}">${ic('trash', 14)}</button>` : ''}</div>` }).join('')}</div>` }
 function renderNewProject() {
   const mm = allMachineProfiles().find(x => x.id === NP.m) || MACHINES[0], ml = matsForMachine(mm.type);
   if (!NP.mat || !ml.some(m => m.id === NP.mat)) { NP.mat = ml[0].id; NP.thick = null } const mt = matById(NP.mat); if (NP.thick == null) NP.thick = mt.thick;
@@ -100,7 +100,7 @@ let draftM = null;
 function openSettings() { draftM = deepCopy(S.machine); renderSettings() }
 function renderSettings() {
   const m = draftM, L = m.type === 'laser', posts = postsFor(m.type);
-  openModal(`${ic('cog', 18)} ${T('Станок и настройки', 'Machine & settings')}`, `<div class="fld"><span>${T('Профили', 'Profiles')}</span></div>${machineCards(m.id, 'preset')}
+  openModal(`${ic('cog', 18)} ${T('Станок и настройки', 'Machine & settings')}`, `<div class="fld"><span>${T('Профили', 'Profiles')}</span></div>${machineCards(m.id, 'preset', true)}
    <div class="grid2"><label class="fld"><span>${T('Название', 'Name')}</span><input class="plain" id="mName" value="${esc(m.name)}"></label>
    ${selF(T('Тип станка', 'Machine type'), 'id="mType"', [['laser', T('Лазерный гравер/резак', 'Laser engraver/cutter')], ['cnc', T('Фрезерный ЧПУ', 'CNC router')]], m.type)}
    ${numF(T('Рабочее поле X', 'Work area X'), 'id="mW" min="10"', m.w, MM(), 1)}${numF(T('Рабочее поле Y', 'Work area Y'), 'id="mH" min="10"', m.h, MM(), 1)}
@@ -109,7 +109,13 @@ function renderSettings() {
    ${numF(T('Макс. рабочая подача', 'Max cutting feed'), 'id="mF" min="10"', m.maxFeed || m.rapid, MMIN(), 100)}${numF(T('Ускорение', 'Acceleration'), 'id="mA" min="1"', m.accel || 500, T('мм/с²', 'mm/s²'), 50)}
    ${L ? '' : numF(T('Безопасная высота Z', 'Safe Z height'), 'id="mZ" min="0.5"', m.safeZ, MM(), .5)}${selF(T('Прошивка', 'Firmware'), 'id="mFw"', [['grbl', 'GRBL 1.1'], ['fluidnc', 'FluidNC'], ['marlin', 'Marlin']], m.fw)}
    ${selF(T('Постпроцессор', 'Postprocessor'), 'id="mPost"', posts.map(p => [p.id, postLabel(p)]), m.type === S.machine.type ? S.post : (m.post || posts[0].id), '', 'post')}</div>
+   ${L ? '' : `<div class="sec"><h3>${ic('laser', 15)} ${T('Лазер + фрезер на одном станке', 'Laser + router on one machine')}</h3>${chkF(T('Станок с двумя головками (лазерный модуль и шпиндель)', 'Machine with two heads (laser module and spindle)'), 'id="mCombo"', !!m.combo, '', 'combo')}
+     <div class="grid3">${numF(T('Смещение лазера X', 'Laser offset X'), 'id="mLox"', (m.laserOff || [0, 0])[0], MM(), .1)}${numF(T('Смещение лазера Y', 'Laser offset Y'), 'id="mLoy"', (m.laserOff || [0, 0])[1], MM(), .1)}${numF(T('Мощность лазера', 'Laser power'), 'id="mLw" min="0"', m.watts ?? '', T('Вт', 'W'), .5)}</div>
+     ${chkF(T('Переключать режим лазера GRBL ($32) при смене головки', 'Switch GRBL laser mode ($32) on head change'), 'id="mC32"', m.comboSwitch32 !== false)}
+     <p class="note">${T('Каждому слою можно выбрать головку. В задании сначала идут операции одной головки, затем пауза M0 для смены, затем другой. Смещение — насколько луч лазера сдвинут от оси шпинделя. Режим не проверен на реальном оборудовании.', 'Each layer picks its head. The job runs one head’s operations, pauses with M0 for the change, then the other head. The offset is how far the beam is from the spindle axis. Not tested on real hardware.')}</p></div>`}
    ${L ? `<div class="row">${chkF(T('Ось Z / подъём фокуса', 'Z axis / focus lift'), 'id="mHasZ"', !!m.hasZ)}${chkF(T('Обдув по M8/M9', 'Air assist on M8/M9'), 'id="mAir"', m.air !== false)}${chkF(T('Динамическая мощность M4', 'Dynamic power M4'), 'id="mDyn"', m.dynamic !== false)}</div>` : ''}
+   <div class="sec"><h3>${T('Работа со станком', 'Machine control')}</h3><div class="row wrap">${chkF(T('Подключаться автоматически', 'Connect automatically'), 'data-mcopt="auto"', MCOPT.auto)}${chkF(T('Показывать список «Перед запуском»', 'Show the “Before you start” checklist'), 'data-mcopt="checks"', MCOPT.checks)}${chkF(T('Спрашивать подтверждение для теста луча, шпинделя, рамки', 'Ask before test fire, spindle, framing'), 'data-mcopt="confirm"', MCOPT.confirm)}</div><p class="note">${T('Подключение никогда не запускает задание. Аварийная кнопка на станке остаётся главной.', 'Connecting never starts a job. The hardware E-stop stays the primary stop.')}</p></div>
+   <div class="sec"><h3>${T('Скорость работы', 'Performance')}</h3>${chkF(T('Ускорение WebAssembly (модуль на Rust)', 'WebAssembly acceleration (Rust module)'), 'id="mWasm"', store.get('noWasm') !== '1')}<p class="note">${esc(typeof wasmStatus === 'function' ? wasmStatus() : '')}. ${T('Растрирование фото и нарезка 3D-моделей идут через быстрый модуль; без него — те же результаты на JavaScript, только медленнее.', 'Photo dithering and 3D slicing use the fast module; without it the same results come from JavaScript, only slower.')}</p></div>
    <label class="fld"><span>${T('Начало G-code (header)', 'G-code header')}</span><textarea class="plain" id="mHead" placeholder="; ${T('например', 'e.g.')} $H">${esc(S.job.header)}</textarea></label>
    <label class="fld"><span>${T('Конец G-code (footer)', 'G-code footer')}</span><textarea class="plain" id="mFoot">${esc(S.job.footer)}</textarea></label>
    <p class="note">${T('Готовые профили — общие заготовки, а не проверенные модели станков. Укажите реальные размеры поля и мощность. Команды начала и конца проверяются при экспорте.', 'Built-in profiles are generic starting points, not verified machine models. Enter the real work area and power. Header and footer commands are checked on export.')}</p>`,
@@ -119,7 +125,7 @@ function readSettings() {
   const m = draftM, g = id => $('#' + id), num = (id, d) => { const e = g(id); if (!e || e.value === '') return d; const v = +e.value; return isFinite(v) ? v : d };
   m.name = g('mName').value.trim() || m.name; m.type = g('mType').value; m.w = Math.max(10, num('mW', m.w)); m.h = Math.max(10, num('mH', m.h)); m.smax = Math.max(1, num('mS', m.smax)); m.rapid = Math.max(10, num('mR', m.rapid)); m.maxFeed = Math.max(10, num('mF', m.maxFeed || m.rapid)); m.accel = Math.max(1, num('mA', m.accel || 500)); m.fw = g('mFw').value; m.post = g('mPost').value;
   if (m.type === 'laser') { if (g('mSrc')) m.laserSource = g('mSrc').value; if (g('mWatts')) m.watts = g('mWatts').value === '' ? null : num('mWatts', null); if (g('mHasZ')) m.hasZ = g('mHasZ').checked; if (g('mAir')) m.air = g('mAir').checked; if (g('mDyn')) m.dynamic = g('mDyn').checked }
-  else { m.zTravel = num('mZt', m.zTravel || 40); m.rpmMax = num('mRpmMax', m.rpmMax || 10000); m.rpm = Math.min(m.rpm || m.rpmMax, m.rpmMax); m.safeZ = Math.max(.5, num('mZ', m.safeZ || 5)) }
+  else { m.zTravel = num('mZt', m.zTravel || 40); m.rpmMax = num('mRpmMax', m.rpmMax || 10000); m.rpm = Math.min(m.rpm || m.rpmMax, m.rpmMax); m.safeZ = Math.max(.5, num('mZ', m.safeZ || 5)); if (g('mCombo')) { m.combo = g('mCombo').checked; m.laserOff = [num('mLox', 0), num('mLoy', 0)]; m.comboSwitch32 = g('mC32').checked; m.watts = g('mLw').value === '' ? null : num('mLw', null) } }
   return m;
 }
 /* Apply a machine profile to the project. Shapes on sheets 2+ keep their place on
@@ -267,50 +273,78 @@ async function bandsDialog() {
   if (n) splitImageBands(s, n);
 }
 
-/* ---------------- font picker: bundled, computer and loaded fonts ---------------- */
+/* ---------------- font list: a drop-down under the font button, like in office programs ----------------
+   Every font is shown in its own typeface; typing filters the list; click or Enter applies at once.
+   It never covers the dialog it was opened from. */
 let FP = null;
-async function openFontPicker(current, onPick) {
-  FP = { cur: current, onPick, q: '', filter: 'all', list: [], sel: current };
-  openModal(`${ic('text', 18)} ${T('Шрифт', 'Font')}`, `<div class="fp"><div class="row"><div class="inp grow"><span class="pre">${ic('search', 14)}</span><input id="fpQ" placeholder="${T('Название шрифта', 'Font name')}" autofocus></div></div>
-    <div class="seg full" id="fpFilter">${[['all', T('Все', 'All')], ['bundled', T('Встроенные', 'Bundled')], ['pc', T('На компьютере', 'On this computer')], ['user', T('Загруженные', 'Loaded')]].map(([k, n]) => `<button data-act="fpFilter" data-v="${k}" aria-pressed="${k === 'all'}">${n}</button>`).join('')}</div>
+const FP_RECENT = () => { try { return JSON.parse(store.get('fontRecent') || '[]') } catch (e) { return [] } };
+async function openFontPicker(current, onPick, anchor) {
+  closeFontDrop();
+  FP = { cur: current, onPick, q: '', filter: 'all', list: [], sel: current, anchor, loading: new Set() };
+  const el = document.createElement('div'); el.className = 'fontdrop'; el.id = 'fontDrop'; el.setAttribute('role', 'listbox');
+  el.innerHTML = `<div class="fd-top"><div class="inp grow"><span class="pre">${ic('search', 14)}</span><input id="fpQ" placeholder="${T('Найти шрифт', 'Find a font')}" autocomplete="off"></div></div>
+    <div class="seg full fd-filter" id="fpFilter">${[['all', T('Все', 'All')], ['bundled', T('Встроенные', 'Bundled')], ['pc', T('Компьютер', 'Computer')], ['user', T('Мои', 'Mine')]].map(([k, n]) => `<button data-act="fpFilter" data-v="${k}" aria-pressed="${k === 'all'}">${n}</button>`).join('')}</div>
     <div class="vlist fp-list" id="fpList"><div class="vinner" id="fpInner"></div></div>
-    <div class="fp-prev" id="fpPrev"></div><p class="note" id="fpNote"></p></div>`,
-    `<button class="btn" data-act="fpFile">${ic('open', 14)} ${T('Загрузить шрифт из файла…', 'Load a font file…')}</button>${DESK && DESK.addFontFolder ? `<button class="btn" data-act="fpFolder">${ic('folder', 14)} ${T('Добавить папку со шрифтами…', 'Add a font folder…')}</button>` : ''}<button class="btn" data-act="closeModal">${T('Отмена', 'Cancel')}</button><button class="primary" data-act="fpOk">${T('Выбрать', 'Choose')}</button>`, 'wide');
-  onModalClose = () => { FP = null };
-  $('#fpQ').oninput = e => { FP.q = e.target.value; fpBuild() };
+    <div class="fd-foot"><span class="note" id="fpNote">${T('Читаю шрифты компьютера…', 'Reading the computer’s fonts…')}</span><span class="sp"></span><button class="mini" data-act="fpFile" title="${T('Загрузить шрифт из файла', 'Load a font file')}">${ic('open', 14)}</button>${DESK && DESK.addFontFolder ? `<button class="mini" data-act="fpFolder" title="${T('Добавить папку со шрифтами', 'Add a font folder')}">${ic('folder', 14)}</button>` : ''}</div>`;
+  document.body.appendChild(el); placeFontDrop();
+  const q = $('#fpQ'); q.oninput = e => { FP.q = e.target.value; FP.sel = null; fpBuild() };
+  q.onkeydown = e => {
+    if (!FP) return; const L = FP.list, i = Math.max(0, L.findIndex(x => x.id === FP.sel));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = clamp(i + (e.key === 'ArrowDown' ? 1 : -1), 0, L.length - 1); if (L[n]) { FP.sel = L[n].id; fpScrollTo(n); fpRows() } }
+    else if (e.key === 'Enter') { e.preventDefault(); const x = L.find(x => x.id === FP.sel) || L[0]; if (x) fpApply(x.id) }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFontDrop() }
+  };
   $('#fpList').onscroll = fpRows;
-  $('#fpNote').textContent = T('Читаю шрифты компьютера…', 'Reading the computer’s fonts…');
+  setTimeout(() => q.focus(), 0);
+  fpBuild();
   let err = null; try { await loadSystemFonts() } catch (e) { err = e }
   if (!FP) return;
   const n = systemFonts ? systemFonts.length : 0;
-  $('#fpNote').textContent = err ? err.message : DESK ? T(`Шрифтов на компьютере: ${n}. Включены все файлы шрифтов из системных папок, папки пользователя и добавленных вами папок — даже не установленные.`, `${n} fonts on this computer: every font file in the system folders, your user folder and folders you added — even ones that are not installed.`) : T(`Доступно шрифтов: ${n}.`, `${n} fonts available.`);
-  fpBuild(); fpPreview();
+  $('#fpNote').textContent = err ? err.message : T(`Шрифтов: ${n + Object.keys(BUNDLED_FONTS).length}`, `${n + Object.keys(BUNDLED_FONTS).length} fonts`);
+  fpBuild(); const i = FP.list.findIndex(x => x.id === current); if (i >= 0) fpScrollTo(i, true);
 }
+function placeFontDrop() {
+  const el = $('#fontDrop'); if (!el || !FP) return; const W = 320, H = Math.min(420, innerHeight - 40);
+  let x = 20, y = 60; const a = FP.anchor && FP.anchor.isConnected ? FP.anchor.getBoundingClientRect() : null;
+  if (a) { x = clamp(a.left, 8, innerWidth - W - 8); y = a.bottom + 4; if (y + H > innerHeight - 8) y = Math.max(8, a.top - H - 4) }
+  el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.width = W + 'px'; el.style.height = H + 'px';
+}
+function closeFontDrop() { const el = $('#fontDrop'); if (el) el.remove(); FP = null }
+document.addEventListener('pointerdown', e => { if (FP && !e.target.closest('#fontDrop') && !e.target.closest('.fontbtn')) closeFontDrop() }, true);
+window.addEventListener('resize', () => { if (FP) placeFontDrop() });
 function fpBuild() {
-  if (!FP) return; const q = FP.q.trim().toLowerCase(), list = [];
-  if (FP.filter === 'all' || FP.filter === 'bundled') for (const [k, v] of Object.entries(BUNDLED_FONTS)) list.push({ id: k, name: v.n, tag: T('встроенный', 'bundled') });
-  if (FP.filter !== 'bundled') for (const e of systemFonts || []) { if (FP.filter === 'user' && e.src !== 'user') continue; if (FP.filter === 'pc' && e.src === 'user') continue; list.push({ id: e.family, name: e.family, tag: e.src === 'user' ? T('загружен', 'loaded') : e.faces.some(f => f.user) ? T('папка пользователя', 'user folder') : `${e.faces.length} ${T('нач.', 'st.')}` }) }
-  FP.list = q ? list.filter(x => x.name.toLowerCase().includes(q)) : list; fpRows();
-}
-function fpRows() {
-  const box = $('#fpList'), inn = $('#fpInner'); if (!box || !FP) return; const rh = 34, n = FP.list.length; inn.style.height = Math.max(1, n) * rh + 'px';
-  if (!n) { inn.innerHTML = `<p class="note" style="padding:8px">${T('Ничего не найдено.', 'Nothing found.')}</p>`; return }
-  const i0 = Math.max(0, Math.floor(box.scrollTop / rh) - 4), i1 = Math.min(n, Math.ceil((box.scrollTop + (box.clientHeight || 300)) / rh) + 4); let h = '';
-  for (let i = i0; i < i1; i++) { const x = FP.list[i], fam = fontFamily(x.id), ready = BUNDLED_FAMILIES.has(fam) || FONT_LOADED.has(fam); h += `<div class="li${x.id === FP.sel ? ' on' : ''}" style="position:absolute;left:0;right:0;top:${i * rh}px" data-act="fpPick" data-v="${esc(x.id)}"><span class="nm" style="${ready ? `font-family:'${esc(fam).replace(/'/g, '')}',var(--f-ui);font-size:14px` : ''}">${esc(x.name)}</span><span class="meta">${esc(x.tag)}</span></div>` }
-  inn.innerHTML = h;
-}
-async function fpPreview() {
-  const el = $('#fpPrev'); if (!el || !FP) return; const f = FP.sel, fam = fontFamily(f);
-  el.innerHTML = `<span class="note">${T('Загружаю…', 'Loading…')}</span>`;
-  const ok = await ensureFont(f); if (!FP || FP.sel !== f) return;
-  el.innerHTML = `<div class="fp-sample" style="font-family:'${esc(fam).replace(/'/g, '')}',var(--f-ui)">${esc(fontLabel(f))} · Мастерская 2026 · Abc Gg 0123</div>${ok || BUNDLED_FAMILIES.has(fam) || fontAvailable(f) ? '' : `<div class="warnline">${ic('warn', 13)} ${T('Шрифт не удалось загрузить.', 'The font could not be loaded.')}</div>`}`;
+  if (!FP) return; const q = FP.q.trim().toLowerCase(), list = [], seen = new Set();
+  const push = x => { if (!seen.has(x.id)) { seen.add(x.id); list.push(x) } };
+  if (!q && FP.filter === 'all') for (const id of FP_RECENT()) { const b = BUNDLED_FONTS[id], e = (systemFonts || []).find(f => f.family === id); if (b || e) push({ id, name: b ? b.n : id, tag: T('недавний', 'recent'), recent: true }) }
+  if (FP.filter === 'all' || FP.filter === 'bundled') for (const [k, v] of Object.entries(BUNDLED_FONTS)) push({ id: k, name: v.n, tag: T('встроенный', 'bundled') });
+  if (FP.filter !== 'bundled') for (const e of systemFonts || []) { if (FP.filter === 'user' && e.src !== 'user') continue; if (FP.filter === 'pc' && e.src === 'user') continue; push({ id: e.family, name: e.family, tag: e.src === 'user' ? T('мой', 'mine') : `${e.faces.length}` }) }
+  FP.list = q ? list.filter(x => x.name.toLowerCase().includes(q)) : list;
+  if (!FP.sel && FP.list.length) FP.sel = FP.list[0].id;
   fpRows();
+}
+function fpScrollTo(i, center) { const box = $('#fpList'); if (!box) return; const rh = 30, top = i * rh; if (center) box.scrollTop = Math.max(0, top - box.clientHeight / 2); else if (top < box.scrollTop) box.scrollTop = top; else if (top + rh > box.scrollTop + box.clientHeight) box.scrollTop = top + rh - box.clientHeight }
+function fpRows() {
+  const box = $('#fpList'), inn = $('#fpInner'); if (!box || !FP) return; const rh = 30, n = FP.list.length; inn.style.height = Math.max(1, n) * rh + 'px';
+  if (!n) { inn.innerHTML = `<p class="note" style="padding:8px">${T('Ничего не найдено.', 'Nothing found.')}</p>`; return }
+  const i0 = Math.max(0, Math.floor(box.scrollTop / rh) - 3), i1 = Math.min(n, Math.ceil((box.scrollTop + (box.clientHeight || 300)) / rh) + 3); let h = '';
+  const want = [];
+  for (let i = i0; i < i1; i++) {
+    const x = FP.list[i], fam = fontFamily(x.id), ready = BUNDLED_FAMILIES.has(fam) || FONT_LOADED.has(fam); if (!ready) want.push(x.id);
+    h += `<div class="li${x.id === FP.sel ? ' on' : ''}${x.id === FP.cur ? ' cur' : ''}${x.recent ? ' rec' : ''}" role="option" style="position:absolute;left:0;right:0;top:${i * rh}px;height:${rh}px" data-act="fpPick" data-v="${esc(x.id)}"><span class="nm" style="font-family:'${esc(fam).replace(/'/g, '')}',var(--f-ui)">${esc(x.name)}</span><span class="meta">${esc(x.tag)}</span></div>`;
+  }
+  inn.innerHTML = h;
+  // load the visible fonts so their names show in their own typeface
+  clearTimeout(FP.lt); FP.lt = setTimeout(async () => { if (!FP) return; let changed = false; for (const id of want.slice(0, 16)) { if (!FP || FP.loading.has(id)) continue; FP.loading.add(id); try { if (await ensureFont(id)) changed = true } catch (e) { } } if (changed && FP) { const keep = $('#fpList').scrollTop; fpRowsLite(); $('#fpList').scrollTop = keep } }, 120);
+}
+function fpRowsLite() { if (!FP) return; for (const el of document.querySelectorAll('#fpInner .li')) { const fam = fontFamily(el.dataset.v), nm = el.querySelector('.nm'); if (nm) nm.style.fontFamily = `'${fam.replace(/'/g, '')}',var(--f-ui)` } }
+function fpApply(f) {
+  if (!FP) return; const cb = FP.onPick; const rec = FP_RECENT().filter(x => x !== f); rec.unshift(f); store.set('fontRecent', JSON.stringify(rec.slice(0, 6)));
+  closeFontDrop(); ensureFont(f).then(() => cb(f));
 }
 function fontPickerAction(act, v) {
   if (!FP) return;
-  if (act === 'fpFilter') { FP.filter = v; $$('#fpFilter button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v)); fpBuild() }
-  else if (act === 'fpPick') { FP.sel = v; fpRows(); fpPreview() }
-  else if (act === 'fpOk') { const f = FP.sel, cb = FP.onPick; closeModal(); ensureFont(f).then(() => cb(f)) }
+  if (act === 'fpFilter') { FP.filter = v; $$('#fpFilter button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v)); FP.sel = null; fpBuild(); $('#fpQ').focus() }
+  else if (act === 'fpPick' || act === 'fpOk') fpApply(v || FP.sel);
   else if (act === 'fpFile') $('#fileFont').click();
-  else if (act === 'fpFolder') DESK.addFontFolder().then(async r => { if (!r || !r.ok) return; systemFonts = null; $('#fpNote').textContent = T('Читаю шрифты…', 'Reading fonts…'); await loadSystemFonts(true); fpBuild(); $('#fpNote').textContent = T(`Папка добавлена: ${r.dir}. Шрифтов: ${systemFonts.length}.`, `Folder added: ${r.dir}. ${systemFonts.length} fonts.`) });
+  else if (act === 'fpFolder') DESK.addFontFolder().then(async r => { if (!r || !r.ok || !FP) return; systemFonts = null; $('#fpNote').textContent = T('Читаю шрифты…', 'Reading fonts…'); await loadSystemFonts(true); fpBuild(); $('#fpNote').textContent = T(`Папка добавлена. Шрифтов: ${systemFonts.length}.`, `Folder added. ${systemFonts.length} fonts.`) });
 }

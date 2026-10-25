@@ -179,6 +179,7 @@ GENS.building = {
     { k: 'picket', t: 'sel', l: () => T('Штакетник', 'Pickets'), def: () => 'pointed', opts: () => [['pointed', T('острый', 'pointed')], ['round', T('круглый', 'round')], ['flat', T('прямой', 'flat')], ['gothic', T('готический', 'gothic')]], show: o => o.fence },
     { t: 'head', l: () => T('Соединения', 'Joints') },
     ...jointFields(),
+    { k: 'roofJoin', t: 'sel', l: () => T('Крыша к стенам', 'Roof to walls'), def: () => 'tabs', opts: () => [['tabs', T('язычки в пазы (держится без клея)', 'tabs into slots (holds without glue)')], ['glue', T('только клей', 'glue only')]], show: o => o.roof === 'gable', help: 'roofJoin' },
   ],
   presets: H_PRESETS,
   migrate(o) { // projects from 0.3: tea / fortress were styles
@@ -198,6 +199,7 @@ GENS.building = {
     const bird = fns.has('birdhouse'), feeder = fns.has('feeder'), piggy = fns.has('piggy'), tea = fns.has('tea'), lantern = fns.has('lantern');
     let roof = openTop ? (o.roof === 'crenel' ? 'crenel' : 'none') : o.roof; if (lid && (roof === 'crenel' || roof === 'none')) roof = 'flat';
     const H = F * o.fh + t, Hb = lid ? H + t : H; // Hb: where the roof starts (lid sits on a ceiling plate)
+    const roofTabs = o.roofJoin !== 'glue' && roof === 'gable' && !lid, roofTabYs = [D * .3, D * .7];
     const p = clamp(o.pitch, 5, 75) * Math.PI / 180, R = roof === 'gable' ? (W / 2) * Math.tan(p) : 0;
     const gq = 65 * Math.PI / 180, ga = W / 2 * .36, gb = W / 2 - ga, gR1 = ga * Math.tan(gq), gR2 = gb * Math.tan(p);
     const shedR = roof === 'shed' ? D * Math.tan(p) : 0;
@@ -243,6 +245,7 @@ GENS.building = {
       }
       const topType = roof === 'flat' && !lid ? 'A' : 'F';
       let panel = fingerPanel(len, H, isFB ? ['A', 'A', topType, 'A'] : ['A', 'B', topType, 'B'], t, fw, clr, sil);
+      if (!isFB && roofTabs) panel = boolOp(panel, roofTabYs.map(y => rectPts((key === 'left' ? D - y : y) - fw / 2, H - .01, fw, t / Math.cos(p) + .01)), 'union'); // tabs that go up through the roof slopes
       const holes = [], engr = [], fills = [], keep = []; // keep: areas without wall pattern
       // crenellations
       if (roof === 'crenel') { const mw = Math.max(7, fw), cd = Math.min(9, o.fh * .2), notch = []; for (let x = t + mw; x + mw < len - t - mw * .5; x += 2 * mw) notch.push(rectPts(x, H - cd, mw, cd + 1)); if (notch.length) panel = boolOp(panel, notch, 'diff') }
@@ -359,13 +362,14 @@ GENS.building = {
     }
     if (roof === 'flat' && !lid) { const top = fingerPanel(W, D, ['B', 'B', 'B', 'B'], t, fw, clr); add(T('Крыша', 'Roof'), [cutItem(top)], { paths: top, origin: [0, 0, H - t], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1], color: rcol }); steps.push(T('Наденьте плоскую крышу на шипы стен.', 'Press the flat roof onto the wall fingers.')) }
     /* ---------- roof panels ---------- */
-    const roofPanel = (name, w, h, edge, ears, coin, asmA) => {
+    const roofPanel = (name, w, h, edge, ears, coin, asmA, slots) => {
       let pnl = [rectPts(0, 0, w, h)];
       const st = Math.max(4, Math.min(8, (w + h) / 30));
       if (edge === 'scallop') { const r = st * .55, n = Math.max(2, Math.round(h / (r * 2))); pnl = boolOp(pnl, Array.from({ length: n }, (_, i) => circlePts(0, (i + .5) * h / n, r, 16)), 'union') }
       if (edge === 'teeth') { const n = Math.max(3, Math.round(h / (st * .7))); pnl = boolOp(pnl, Array.from({ length: Math.ceil(n / 2) }, (_, i) => rectPts(-st * .5, (2 * i + .5) * h / n, st * .5 + .01, h / n)), 'union') }
       if (ears) { const e = Math.min(w * .3, 14); pnl = boolOp(pnl, [[...bezPts([w * .35, 0], [w * .1, -e * .2], [0, -e * .5], [-e * .3, -e], 10), ...bezPts([-e * .3, -e], [-e * .05, -e * .4], [0, -e * .1], [0, 0], 8).slice(1)], [...bezPts([w * .35, h], [w * .1, h + e * .2], [0, h + e * .5], [-e * .3, h + e], 10), ...bezPts([-e * .3, h + e], [-e * .05, h + e * .4], [0, h + e * .1], [0, h], 8).slice(1)]].map(q => q.length ? q : []), 'union') }
       if (coin) pnl = boolOp(pnl, [rectPts(w * .55 - 1.75, h / 2 - 16, 3.5, 32)], 'diff');
+      if (slots && slots.length) pnl = boolOp(pnl, slots, 'diff');
       const items = [cutItem(pnl)], rf = roofing(o.roofing, offsetPaths(pnl, -1.2), st); if (rf.lines.length) items.push(engLines(rf.lines));
       add(name, items, Object.assign({ paths: pnl, color: rcol }, asmA));
       return pnl;
@@ -373,9 +377,12 @@ GENS.building = {
     const ov = clamp(o.over, 0, 40), coinOnRoof = piggy && roof !== 'flat';
     if (roof === 'gable') {
       const s = (W / 2) / Math.cos(p) + ov, len = D + 2 * ov, ex = W / 2 - s * Math.cos(p), ez = Hb + R - s * Math.sin(p), ears = false;
-      roofPanel(T('Скат крыши 1', 'Roof slope 1'), s, len, o.roofEdge, ears, coinOnRoof, { origin: [ex, -ov, ez], u: [Math.cos(p), 0, Math.sin(p)], v: [0, 1, 0], n: [-Math.sin(p), 0, Math.cos(p)] });
-      roofPanel(T('Скат крыши 2', 'Roof slope 2'), s, len, o.roofEdge, ears, false, { origin: [W - ex, D + ov, ez], u: [-Math.cos(p), 0, Math.sin(p)], v: [0, -1, 0], n: [Math.sin(p), 0, Math.cos(p)] });
-      steps.push(T('Приклейте скаты крыши к фронтонам и верху боковых стен.', 'Glue the roof slopes onto the gables and the side-wall tops.'));
+      // slots for the side-wall tabs: the tab rises vertically, so in the tilted panel the slot is (t + t·sin p) / cos p long
+      const a0 = -ex / Math.cos(p), sl = (t + t * Math.sin(p)) / Math.cos(p) + clr, rs = roofTabs ? roofTabYs.map(y => rectPts(a0 - clr / 2, y + ov - fw / 2 - clr / 2, sl, fw + clr)) : null;
+      const rs2 = roofTabs ? roofTabYs.map(y => rectPts(a0 - clr / 2, D + ov - y - fw / 2 - clr / 2, sl, fw + clr)) : null;
+      roofPanel(T('Скат крыши 1', 'Roof slope 1'), s, len, o.roofEdge, ears, coinOnRoof, { origin: [ex, -ov, ez], u: [Math.cos(p), 0, Math.sin(p)], v: [0, 1, 0], n: [-Math.sin(p), 0, Math.cos(p)] }, rs);
+      roofPanel(T('Скат крыши 2', 'Roof slope 2'), s, len, o.roofEdge, ears, false, { origin: [W - ex, D + ov, ez], u: [-Math.cos(p), 0, Math.sin(p)], v: [0, -1, 0], n: [Math.sin(p), 0, Math.cos(p)] }, rs2);
+      steps.push(roofTabs ? T('Наденьте скаты крыши пазами на язычки боковых стен; по фронтонам — каплю клея.', 'Put the roof slopes onto the side-wall tabs through their slots; a drop of glue along the gables.') : T('Приклейте скаты крыши к фронтонам и верху боковых стен.', 'Glue the roof slopes onto the gables and the side-wall tops.'));
       // bargeboards on both gables
       if (o.eave !== 'plain') {
         const bw = Math.max(3.5, Math.min(9, W * .05)) * (o.eave === 'russian' ? 1.35 : 1), strip = bargeboard(o.eave, s, bw, p);

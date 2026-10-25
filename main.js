@@ -1,6 +1,6 @@
 'use strict';
 // SkyKerf_Studio — Electron main process (Windows, Linux; macOS builds are left to porters)
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fss = require('fs');
@@ -99,6 +99,12 @@ function createWindow() {
   // Web Serial: a native list of ports. Connecting never starts a job.
   ses.on('select-serial-port', async (event, portList, _wc, callback) => {
     event.preventDefault();
+    // the port of the last machine is chosen without asking (automatic connection)
+    if (preferredPort && portList.length) {
+      const norm = v => { if (v == null) return ''; const s = String(v).toLowerCase(); return /^\d+$/.test(s) ? (+s).toString(16).padStart(4, '0') : s.replace(/^0x/, '').padStart(4, '0') };
+      const hit = portList.find(p => norm(p.vendorId) === preferredPort.vid && norm(p.productId) === preferredPort.pid);
+      if (hit && preferredPort.auto) { preferredPort.auto = false; callback(hit.portId); return }
+    }
     if (!portList.length) {
       await dialog.showMessageBox(win, { type: 'info', title: APP_NAME, message: 'Порты не найдены / No serial ports found', detail: 'Подключите станок по USB и проверьте драйвер (CH340, CP210x, FTDI).\nConnect the machine over USB and check the driver (CH340, CP210x, FTDI).\nLinux: sudo usermod -aG dialout $USER' });
       callback(''); return;
@@ -108,6 +114,36 @@ function createWindow() {
     callback(response < portList.length ? portList[response].portId : '');
   });
 }
+
+/* ---------- IPC: machine port and clipboard ---------- */
+let preferredPort = null;
+ipcMain.handle('skykerf:preferSerial', (_e, o) => { if (o && /^[0-9a-f]{4}$/i.test(o.vid || '') && /^[0-9a-f]{4}$/i.test(o.pid || '')) preferredPort = { vid: o.vid.toLowerCase(), pid: o.pid.toLowerCase(), auto: !!o.auto }; return true });
+// Clipboard read on request only (paste). Images from a browser arrive as a bitmap; returned as PNG.
+ipcMain.handle('skykerf:readClipboard', async () => {
+  const out = { formats: [] }, LIM = 20e6;
+  if (typeof clipboard.readImage === 'function') { // Electron ≤ 43: synchronous clipboard API
+    try { out.formats = clipboard.availableFormats() } catch (e) { }
+    try { const im = clipboard.readImage(); if (!im.isEmpty()) { const sz = im.getSize(); const scaled = sz.width * sz.height > 40e6 ? im.resize({ width: Math.round(sz.width / 2) }) : im; out.image = scaled.toDataURL() } } catch (e) { }
+    try { out.text = clipboard.readText().slice(0, LIM) } catch (e) { }
+    try { out.html = clipboard.readHTML().slice(0, LIM) } catch (e) { }
+    return out;
+  }
+  // Electron 44+: web-style clipboard (read() → ClipboardItem[] with getType(mime) → Blob)
+  try {
+    for (const it of await clipboard.read()) {
+      for (const type of it.types || []) {
+        if (!/^(image\/(png|jpeg|bmp|gif|webp)|text\/plain|text\/html|image\/svg\+xml)$/.test(type)) continue;
+        out.formats.push(type);
+        const blob = await it.getType(type); if (!blob || blob.size > 80e6) continue;
+        if (type.startsWith('image/') && type !== 'image/svg+xml' && !out.image) out.image = `data:${type};base64,${Buffer.from(await blob.arrayBuffer()).toString('base64')}`;
+        else if ((type === 'text/plain' || type === 'image/svg+xml') && out.text == null) out.text = (await blob.text()).slice(0, LIM);
+        else if (type === 'text/html' && out.html == null) out.html = (await blob.text()).slice(0, LIM);
+      }
+    }
+  } catch (e) { }
+  if (out.text == null) { try { out.text = clipboard.readText().slice(0, LIM) } catch (e) { } }
+  return out;
+});
 
 /* ---------- IPC: files ---------- */
 const cleanName = n => path.basename(String(n || 'untitled.txt')).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').slice(0, 180) || 'untitled.txt';

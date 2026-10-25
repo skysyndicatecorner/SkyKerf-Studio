@@ -18,7 +18,7 @@ document.addEventListener('click', async e => {
   const gl = t.closest('.gl'); if (gl) { jumpToLine(+gl.dataset.line); return }
   const a = t.closest('[data-act]'); if (!a || a.disabled) return;
   const act = a.dataset.act, v = a.dataset.v;
-  if (a.type === 'checkbox' && act !== 'camOn') return;
+  if (a.type === 'checkbox' && !['camOn', 'lout', 'eye'].includes(act)) return;
   try { await doAct(act, v, a, e) } catch (err) { logError('act:' + act, err); toast(T('Ошибка: ', 'Error: ') + (err.message || err), 'err') }
 });
 function jumpToLine(ln) { const m = P.moves.find(m => m.l >= ln); P.curLine = ln; if (m) { P.t = m.t0 + 1e-6; P.playing = false; updatePbTime(); renderChrome(); draw() } const box = $('#gcList'); if (box) box.scrollTop = ln * 19 - box.clientHeight / 2; renderGcList() }
@@ -56,7 +56,8 @@ async function doAct(act, v, a, e) {
     case 'layoutRestore': restoreLayout(+v); break;
     case 'layoutDel': pushUndo(T('Удаление варианта', 'Delete variant')); S.layouts.splice(+v, 1); changed(); break;
     /* ---- wizards & imports ---- */
-    case 'wiz': if (!needMachine(wizNeeds(v), wizName(v)[0])) break; if (!$('#modal').hidden) closeModal(); if (v === 'slicer') openSlicer(); else if (v === 'relief') { pendingImgAction = 'relief'; $('#fileImg').click() } else openGen(v); break;
+    case 'genSwitch': { const tg = TEST_GROUP().find(x => x[0] === v); if (tg && tg[2] && !needMachine(tg[2], tg[1])) break; closeModal(); openGen(v); break }
+    case 'wiz': if (!needMachine(wizNeeds(v), wizName(v)[0])) break; if (!$('#modal').hidden) closeModal(); if (v === 'tests') openGen(isLaser() ? 'test' : 'kerf'); else if (v === 'slicer') openSlicer(); else if (v === 'relief') { pendingImgAction = 'relief'; $('#fileImg').click() } else openGen(v); break;
     case 'imgRaster': closeModal(); addRasterImage(pendingImg); break;
     case 'imgTrace': closeModal(); openTrace(pendingImg); break;
     case 'imgLayered': { const im = pendingImg; closeModal(); openGen('layered', { imgAsset: imageToAsset(im).id }); break }
@@ -67,6 +68,10 @@ async function doAct(act, v, a, e) {
     case 'trView': if (TR) { TR.view = v; $$('[data-act="trView"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v)); traceDraw() } break;
     case 'doTrace': doTrace(); break;
     case 'genView': if (GS) { GS.view = v; renderGenVb(); genDraw() } break;
+    case 'hk': hkAction(v); break;
+    case 'mjMode': if (GS) { GS.jmode = GS.jmode ? null : 'edge'; GS.jpick = null; if (GS.jmode) { GS.view = '2d'; renderGenVb() } renderGenSide(); genDraw() } break;
+    case 'mjDel': if (GS && GS.o.mj) { GS.o.mj.splice(+v, 1); mjRefresh() } break;
+    case 'gen2z': if (GS) { const vv = GS.v2 || (GS.v2 = { k: 1, dx: 0, dy: 0 }); if (+v === 0) GS.v2 = { k: 1, dx: 0, dy: 0 }; else { const k2 = clamp(vv.k * (+v > 0 ? 1.4 : 1 / 1.4), .2, 40); vv.dx *= k2 / vv.k; vv.dy *= k2 / vv.k; vv.k = k2 } genDraw() } break;
     case 'genPlace': genPlace(); break; case 'genImg': $('#fileGenImg').click(); break;
     case 'slOpen': $('#file3d').click(); break;
     case 'slSample': SL.base = v === 'torus' ? sampleTorus() : sampleVase(); SL.name = v === 'torus' ? T('Тор (пример)', 'Torus (sample)') : T('Ваза (пример)', 'Vase (sample)'); SL.size = v === 'torus' ? 60 : 150; slPrepare(); slRenderSide(); slRefresh(true); break;
@@ -77,8 +82,9 @@ async function doAct(act, v, a, e) {
     case 'nestPick': if (NS) { NS.cur = +v; renderNestSide(); nestDraw() } break;
     /* ---- CAD editing ---- */
     case 'assign': { const l = +a.dataset.l; curDrawLayer = l; if (sel.size) { pushUndo(T('Смена операции', 'Change operation')); for (const s of selShapes()) s.layer = l; changed() } else { renderChrome(); toast(T(`Новые фигуры рисуются на слое «${layerName(S.layers[l])}»`, `New shapes go to “${layerName(S.layers[l])}”`)) } break }
-    case 'pickLayer': { if (e.target.closest('[data-act="eye"]')) break; const l = +a.dataset.l; sel = new Set(S.shapes.filter(s => s.layer === l && !s.parked && plateOf(s) === curPlate).map(s => s.id)); curDrawLayer = l; refresh(); break }
-    case 'eye': { e.stopPropagation(); const L = S.layers[+a.dataset.l]; pushUndo(T('Видимость слоя', 'Layer visibility')); L.show = !L.show; for (const s of S.shapes) if (s.layer === L.id) sel.delete(s.id); changed(); break }
+    case 'pickLayer': if (e.target.closest('.sw2')) break; { if (e.target.closest('[data-act="eye"]')) break; const l = +a.dataset.l; sel = new Set(S.shapes.filter(s => s.layer === l && !s.parked && plateOf(s) === curPlate).map(s => s.id)); curDrawLayer = l; refresh(); break }
+    case 'lout': { e.stopPropagation(); const L = S.layers[+a.dataset.l]; pushUndo(T('Вывод слоя', 'Layer output')); L.on = e.target.checked; changed(); toast(L.on ? T(`Слой «${layerName(L)}» будет обрабатываться.`, `Layer “${layerName(L)}” will be processed.`) : T(`Слой «${layerName(L)}» не попадёт в G-code (остаётся на столе).`, `Layer “${layerName(L)}” is left out of the G-code (stays on the bed).`)); break }
+    case 'eye': { e.stopPropagation(); const L = S.layers[+a.dataset.l]; pushUndo(T('Видимость слоя', 'Layer visibility')); L.show = a.type === 'checkbox' ? a.checked : !L.show; for (const s of S.shapes) if (s.layer === L.id) sel.delete(s.id); changed(); break }
     case 'pickShape': { const s = shapeById(+a.dataset.id); if (!s) break; const ids = groupIds(s); if (e.shiftKey || e.ctrlKey || e.metaKey) { const has = sel.has(s.id); for (const id of ids) has ? sel.delete(id) : sel.add(id) } else sel = new Set(ids); renderObjRows(); renderRight(); renderChrome(); draw(); break }
     case 'del': delSel(); break; case 'dup': dupSel(); break; case 'rename': renameSel(); break;
     case 'lockToggle': lockSel(!selShapes().every(s => s.lock)); break;
@@ -99,8 +105,9 @@ async function doAct(act, v, a, e) {
     case 'camOn': { const L = S.layers[+a.dataset.l]; pushUndo(L.on ? T('Отключение операции', 'Disable operation') : T('Включение операции', 'Enable operation')); L.on = e.target.checked; changed(); break }
     case 'camUp': case 'camDown': { const id = +a.dataset.l, used = camLayers().map(L => L.id), i = used.indexOf(id), j = act === 'camUp' ? i - 1 : i + 1; if (j < 0 || j >= used.length) break; pushUndo(T('Порядок операций', 'Operation order')); const o = S.order, ia = o.indexOf(id), ib = o.indexOf(used[j]);[o[ia], o[ib]] = [o[ib], o[ia]]; changed(); break }
     case 'orderMode': if (S.orderMode === v) break; pushUndo(T('Режим порядка', 'Order mode')); if (v === 'manual') { const cur = camLayers().map(L => L.id); S.order = cur.concat(S.order.filter(i => !cur.includes(i))) } S.orderMode = v; changed(); break;
+    case 'layerHead': { const L = S.layers[camSel]; if (!L) break; pushUndo(T('Головка операции', 'Operation head')); L.head = v; if (L.head === 'cnc' && L.type === 'raster') toast(T('Растровая гравировка возможна только лазером.', 'Raster engraving needs the laser.')); changed(); break }
     case 'layerAuto': { const L = S.layers[camSel]; if (!L || L.auto) break; pushUndo(T('Параметры из материала', 'Values from material')); L.auto = true; changed(); break }
-    case 'layerManual': { const L = S.layers[camSel]; if (!L || !L.auto) break; pushUndo(T('Ручные параметры', 'Manual values')); if (isLaser()) { const r = resolveLaser(L, sheetAt(curPlate)); Object.assign(L.laser, { power: r.power, minPower: r.minPower, speed: r.speed, passes: r.passes, interval: r.interval, kerf: r.kerf }) } else { const r = resolveCnc(L, sheetAt(curPlate)); Object.assign(L.cnc, { rpm: r.rpm, feed: r.feed, plunge: r.plunge, step: r.step, depth: r.depth }) } L.auto = false; changed(); break }
+    case 'layerManual': { const L = S.layers[camSel]; if (!L || !L.auto) break; pushUndo(T('Ручные параметры', 'Manual values')); if (layerHead(L) === 'laser') { const r = resolveLaser(L, sheetAt(curPlate)); Object.assign(L.laser, { power: r.power, minPower: r.minPower, speed: r.speed, passes: r.passes, interval: r.interval, kerf: r.kerf }) } else { const r = resolveCnc(L, sheetAt(curPlate)); Object.assign(L.cnc, { rpm: r.rpm, feed: r.feed, plunge: r.plunge, step: r.step, depth: r.depth }) } L.auto = false; changed(); break }
     case 'ovrReset': { const L = S.layers[camSel]; if (!L) break; pushUndo(T('Значение материала', 'Material value')); if (isLaser()) { L.ovr = Object.assign({}, L.ovr); delete L.ovr[v] } else { L.ovrC = Object.assign({}, L.ovrC); delete L.ovrC[v] } changed(); break }
     case 'layerToMat': { const L = S.layers[camSel]; if (L) layerToMaterial(L); break }
     case 'issue': { const x = GEO.issues[+v]; if (!x) break; sel = new Set(x.ids.filter(id => shapeById(id))); switchTab('cad'); const b = selBox(); if (b) { fitBox(b, 120); draw() } refresh(); break }
@@ -116,6 +123,7 @@ async function doAct(act, v, a, e) {
     case 'colorBy': P.colorBy = v; renderRight(); draw(); break;
     case 'copyGc': try { await navigator.clipboard.writeText(P.text); toast(T('G-code скопирован в буфер обмена.', 'G-code copied to the clipboard.')) } catch (err) { toast(T('Буфер обмена недоступен в этом окне.', 'The clipboard is unavailable here.'), 'warn') } break;
     case 'openGc': $('#fileGc').click(); break;
+    case 'gcConv': if (v === 'svg') gcToSVG(); else if (v === 'dxf') gcToDXF(); else if (v === 'png') gcToPNG(10); else if (v === 'png2') gcToPNG(20); else if (v === 'cad') gcToProject(); else if (v === 'pngcad') gcPngToProject(); break;
     case 'backProj': P.file = null; P.rev = -1; refresh(); break;
     case 'gcHit': { if (!P.hits.length) break; const cur = P.curLine, d = +v; let k = d > 0 ? P.hits.findIndex(h => h > cur) : (() => { for (let i = P.hits.length - 1; i >= 0; i--) if (P.hits[i] < cur) return i; return -1 })(); if (k < 0) k = d > 0 ? 0 : P.hits.length - 1; jumpToLine(P.hits[k]); break }
     case 'gcLine': jumpToLine(+v); break;
@@ -125,24 +133,39 @@ async function doAct(act, v, a, e) {
     case 'offerDl': case 'offerCopy': offerAction(act, v); break;
     case 'fpFilter': case 'fpPick': case 'fpOk': case 'fpFile': case 'fpFolder': fontPickerAction(act, v); break;
     case 'fontPick': { const p = a.dataset.p; let cur = p === 'data-topt' ? toolOpt.font : p === 'data-txt' ? (selShapes()[0] || {}).font : GS ? GS.o[p.slice(3)] : 'plex';
-      openFontPicker(cur, f => { if (p === 'data-topt') { toolOpt.font = f; toolOpt.weight = defaultWeight(f); renderRight() } else if (p === 'data-txt') { const s = selShapes()[0]; if (s && s.kind === 'text') updateText(Object.assign(textSpec(s), { font: f, weight: defaultWeight(f) })) } else if (GS) { GS.o[p.slice(3)] = f; renderGenSide(); genRegen() } }); break } case 'exCopy': exportCopy(); break;
+      if (FP && FP.anchor === a) { closeFontDrop(); break }
+      openFontPicker(cur, f => { if (p === 'data-topt') { toolOpt.font = f; toolOpt.weight = defaultWeight(f); renderRight() } else if (p === 'data-txt') { const s = selShapes()[0]; if (s && s.kind === 'text') updateText(Object.assign(textSpec(s), { font: f, weight: defaultWeight(f) })) } else if (GS) { GS.o[p.slice(3)] = f; renderGenSide(); genRegen() } }, a); break } case 'exCopy': exportCopy(); break;
     case 'exOpenFolder': if (EX && EX.saved && DESK && DESK.showItemInFolder) DESK.showItemInFolder(EX.saved); break;
     /* ---- machine ---- */
-    case 'mcMode': if (MC.connected && v !== 'serial') await serialDisconnect(); MC.mode = v; setState(v === 'demo' ? 'demo' : 'offline'); refresh(); break;
-    case 'mcConnect': MC.baud = +($('#baudSel')?.value || 115200); serialConnect(); break;
+    case 'mcMode': if (MC.connected && v !== 'serial') await serialDisconnect(); MC.mode = v; setState(v === 'demo' ? 'demo' : 'offline'); refresh(); if (v === 'serial') autoConnect(); break;
+    case 'mcConnect': serialConnect(); break;
     case 'mDetect': detectDevice(); break;
     case 'mcClearLog': { MC.log = []; const c = $('#mcCon'); if (c) c.innerHTML = ''; break }
-    case 'demoRate': MC.demoRate = +v; renderRight(); break;
+    case 'demoRate': MC.demoRate = +v; renderMachineDock(); break;
     case 'jobStart': jobStart(); break; case 'jobPause': jobPause(); break; case 'jobStop': jobStop(); break;
-    case 'jogStep': MC.step = +v; renderMachineView(); break;
-    case 'jog': { if (MC.job.run && !MC.job.pause) { toast(T('Во время задания перемещение недоступно.', 'Jogging is disabled while a job runs.')); break } if (MC.state === 'alarm') { toast(T('Контроллер в состоянии ALARM — сначала поиск нуля ($H) или разблокировка ($X).', 'The controller is in ALARM — home ($H) or unlock ($X) first.'), 'warn'); break } const ax = v[0], dir = v[1] === '+' ? 1 : -1; sendCmd(`$J=G91 G21 ${ax}${fx(dir * MC.step, 3)} F${ax === 'Z' ? 600 : 3000}`); break }
-    case 'mHome': sendCmd('$H'); break; case 'mUnlock': sendCmd('$X'); break;
+    case 'estop': emergencyStop(); break;
+    case 'jogStep': MC.step = +v; renderMachineDock(); break;
+    case 'jog': { const ax = v[0], dir = v[1] === '+' ? 1 : -1; jog(ax, dir * MC.step); break }
+    case 'mHome': sendCmd('$H'); break; case 'mUnlock': MC.lastErr = null; sendCmd('$X'); renderMachineDock(); break;
+    case 'mcErrHide': MC.lastErr = null; renderMachineDock(); break;
     case 'zeroAx': sendCmd(`G10 L20 P1 ${'XYZ'[+v]}0`); MC.zero[+v] = MC.pos[+v]; updateMachineLive(); break;
     case 'mZeroXY': sendCmd('G10 L20 P1 X0 Y0'); MC.zero[0] = MC.pos[0]; MC.zero[1] = MC.pos[1]; updateMachineLive(); break;
     case 'mGoZero': sendCmd('G90 G0 X0 Y0'); break;
-    case 'mFrame': { if (!P.stats) break; const b = P.stats.b, pts = [[b[0], b[1]], [b[3], b[1]], [b[3], b[4]], [b[0], b[4]], [b[0], b[1]]]; const ok = await confirmBox(T('Обвести рамку задания', 'Trace the job frame'), T('Головка обойдёт габарит задания на холостом ходу (луч/шпиндель выключены). Убедитесь, что путь свободен.', 'The head will trace the job outline at travel speed with the beam/spindle off. Make sure the path is clear.'), [{ label: T('Обвести', 'Trace'), value: true, primary: true }, { label: T('Отмена', 'Cancel'), value: false }]); if (!ok) break; mlog('rx', T('Обвод рамки задания', 'Tracing the job frame')); sendCmd('G90 G21'); for (const p of pts) await sendCmd(`G0 X${fx(p[0], 2)} Y${fx(p[1], 2)}`); break }
-    case 'mFire': { const ok = await confirmBox(T('Тест луча', 'Test fire'), T('Лазер включится на 1% мощности примерно на 0,5 с. Наденьте защитные очки.', 'The laser turns on at 1% for about 0.5 s. Put on safety glasses.'), [{ label: T('Включить', 'Fire'), value: true, primary: true }, { label: T('Отмена', 'Cancel'), value: false }]); if (!ok) break; await sendCmd(`M3 S${Math.max(1, Math.round(S.machine.smax * .01))}`); setTimeout(() => sendCmd('M5'), 500); break }
-    case 'mSpin': { const ok = await confirmBox(T('Шпиндель', 'Spindle'), T('Шпиндель запустится. Остановить — кнопкой «Стоп» или командой M5.', 'The spindle will start. Stop it with Stop or the M5 command.'), [{ label: T('Запустить', 'Start'), value: true, primary: true }, { label: T('Отмена', 'Cancel'), value: false }]); if (ok) sendCmd(`M3 S${S.machine.rpm || 10000}`); break }
+    case 'mFrame': frameJob(); break;
+    case 'mFire': testFire(); break;
+    case 'mcFireM': MC.fire.method = v; renderMachineDock(); break;
+    case 'mSpin': toggleSpindle(); break;
+    case 'mProbe': probeZ(); break;
+    case 'mcChecksOff': MCOPT.checks = false; toast(T('Список «Перед запуском» скрыт. Вернуть — в настройках станка.', 'The “Before you start” list is hidden. Bring it back in machine settings.')); renderMachineDock(); break;
+    case 'mcDock': store.set('mcDock', store.get('mcDock') === 'min' ? '' : 'min'); renderMachineDock(); requestAnimationFrame(drawMachineCanvas); break;
+    case 'mvFit': mvFit(); drawMachineCanvas(); break;
+    case 'mvZoom': { const c = $('#mcv'), r = c.getBoundingClientRect(); mvZoomAt(r.width / 2, r.height / 2, +v > 0 ? 1.4 : 1 / 1.4); break }
+    case 'mvFollow': MV.follow = !MV.follow; drawMachineCanvas(); break;
+    case 'gpSettings': openGamepadSettings(); break;
+    case 'gpLearn': gpLearn(v); break;
+    case 'gpReset': gpResetMap(); break;
+    case 'gpClear': GP.cfg.map[v] = ''; gpSave(); openGamepadSettings(); break;
+    case 'delMachine': if (await deleteUserMachine(v)) renderSettings(); break;
     case 'macro': { const m = (S.macros || [])[+v]; if (m) for (const c of m.g.split(';')) if (c.trim()) await sendCmd(c.trim()); break }
     case 'editMacros': openMacros(); break;
     case 'saveMacros': { const list = $('#mcEdit').value.split('\n').map(l => l.split('|')).filter(p => p.length > 1 && p[0].trim() && p[1].trim()).map(p => ({ n: p[0].trim(), g: p.slice(1).join('|').trim() })); pushUndo(T('Макросы', 'Macros')); S.macros = list; closeModal(); changed(); break }
@@ -179,7 +202,9 @@ function onChange(t) {
     const L = S.layers[camSel];
     if (d.k === 'type') { pushUndo(T('Тип процесса', 'Process type')); L.type = t.value; changed(); return }
     const [g, k] = d.k.split('.'); const v = t.tagName === 'SELECT' ? t.value : numVal(t); if (v == null) { renderRight(); return }
-    pushUndo(T('Параметр операции', 'Operation setting'), 'k' + camSel + d.k); L[g][k] = v;
+    pushUndo(T('Параметр операции', 'Operation setting'), 'k' + camSel + d.k);
+    if (g === 'cnc' && k === 'zMode' && v === 'custom') { const cur = Object.assign({}, CNC_Z_DEF, Z_PRESETS[resolveCnc(L, sheetAt(curPlate)).zMode || 'std'] || {}); for (const q of Object.keys(CNC_Z_DEF)) if (q !== 'zMode') L.cnc[q] = cur[q] }
+    L[g][k] = v;
     if (g === 'cnc' && k === 'toolId') { const tl = toolById(v); if (tl.type === 'v' && !['vcarve', 'chamfer', 'engrave'].includes(L.cnc.op)) toast(T('Выбрана V-фреза: подходит для V-резьбы, фаски и гравировки.', 'A V-bit is selected: use it for V-carve, chamfer or engraving.')) }
     changed(); return;
   }
@@ -189,9 +214,16 @@ function onChange(t) {
   if (t.id === 'camPlate') { setPlate(+t.value); return }
   if (t.id === 'rapChk') { P.rapids = t.checked; draw(); return } if (t.id === 'ghostChk') { P.ghost = t.checked; draw(); return } if (t.id === 'dirsChk') { P.dirs = t.checked; draw(); return } if (t.id === 'followChk') { P.follow = t.checked; return }
   if (d.chk) { MC.checks[d.chk] = t.checked; return }
+  if (d.mcopt) { MCOPT[d.mcopt] = t.checked; if (d.mcopt === 'auto' && t.checked) autoConnect(); return }
+  if (d.mcf) { const v = numVal(t); if (v != null) MC.fire[d.mcf] = v; return }
+  if (d.mcp) { const v = numVal(t); if (v != null) MC.probe[d.mcp] = v; return }
+  if (d.gpopt) { GP.cfg[d.gpopt] = t.type === 'checkbox' ? t.checked : +t.value; gpSave(); return }
   if (t.id === 'fovR') { setFeedOverride(+t.value); return }
   if (t.id === 'mType') { readSettings(); const base = MACHINES.find(x => x.type === t.value); draftM = Object.assign(deepCopy(base), { name: draftM.name, w: draftM.w, h: draftM.h, id: draftM.id }); renderSettings(); return }
   if (t.id === 'npMat') { NP.mat = t.value; NP.thick = matById(t.value).thick; readNP(); NP.thick = matById(t.value).thick; renderNewProject(); return }
+  if (t.id === 'mWasm') { store.set('noWasm', t.checked ? '0' : '1'); toast(T('Изменение вступит в силу после перезапуска программы.', 'The change takes effect after restarting the app.')); return }
+  if (d.hk && GS) { hkSet(d.hk, t); return }
+  if (d.mj && GS) { const [i, k] = d.mj.split(':'), j = (GS.o.mj || [])[+i], v = numVal(t); if (!j || v == null) return; j[k] = v; mjRefresh(); return }
   if (d.gf && GS) { const f = GS.g.fields.find(f => f.k === d.gf); if (!f) return; GS.o[f.k] = f.t === 'chk' ? t.checked : f.t === 'num' ? (numVal(t) ?? GS.o[f.k]) : t.value; if (f.preset && GS.g.presets && GS.g.presets[t.value]) Object.assign(GS.o, GS.g.presets[t.value]); if (f.apply) Object.assign(GS.o, f.apply(t.value) || {}); if (f.t === 'chk' || f.t === 'sel' || f.preset) renderGenSide(); genRegen(); return }
   if (d.sl) { slSet(d.sl, t.type === 'checkbox' ? t.checked : t.value); return }
   if (d.tr && TR) { const k = d.tr; TR[k] = t.type === 'checkbox' ? t.checked : t.tagName === 'SELECT' ? +t.value : (numVal(t) ?? TR[k]); if (k === 'multiLayer') renderTraceSide(); traceRun(); return }
@@ -221,7 +253,7 @@ pickFile('#fileImg', async f => { const im = await fileToImage(f), act = pending
 pickFile('#fileGenImg', async f => { if (!GS) return; const im = await fileToImage(f); GS.o.imgAsset = imageToAsset(im).id; renderGenSide(); genRegen() });
 pickFile('#file3d', f => slLoadFile(f));
 pickFile('#fileGc', async f => { const text = await f.text(); loadGcode(text, f.name); P.report = validateGcode(text, currentPost(), S.machine, {}); P.job = null; P.t = 0; P.playing = false; fitPlate(0); refresh(); toast(T(`Открыт ${f.name}: ${P.lines.length} строк. Файл проверен по профилю «${postLabel(currentPost())}».`, `Opened ${f.name}: ${P.lines.length} lines, checked against “${postLabel(currentPost())}”.`)) });
-pickFile('#fileFont', async f => { const fam = await addUserFont(f); toast(T(`Шрифт «${fam}» загружен и сохранён в вашей библиотеке шрифтов.`, `Font “${fam}” loaded and kept in your font library.`)); if (FP) { FP.sel = fam; FP.filter = 'user'; $$('#fpFilter button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === 'user')); fpBuild(); fpPreview() } });
+pickFile('#fileFont', async f => { const fam = await addUserFont(f); toast(T(`Шрифт «${fam}» загружен и сохранён в вашей библиотеке шрифтов.`, `Font “${fam}” loaded and kept in your font library.`)); if (FP) { FP.sel = fam; FP.filter = 'user'; $$('#fpFilter button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === 'user')); fpBuild() } });
 pickFile('#fileMat', async f => { const n = importMaterials(await f.text()); renderMatList(); toast(T(`Импортировано материалов: ${n}. Их статус — «не проверено» или «пользовательский».`, `Imported ${n} materials. Their status is “unverified” or “user”.`)) });
 
 /* drag-and-drop anywhere (spec 7.1) */
@@ -235,20 +267,21 @@ document.addEventListener('drop', async e => {
   if (!$('#modal').hidden && !SL.viewer) closeModal();
   for (const f of files.slice(0, 8)) await importFile(f);
 });
-/* paste: SVG text or an image from the clipboard */
+/* paste: our own objects, a picture copied in a browser or elsewhere, SVG */
 document.addEventListener('paste', async e => {
-  if (tab !== 'cad' || !$('#modal').hidden || inField()) return;
-  const items = [...(e.clipboardData?.items || [])], img = items.find(i => i.kind === 'file' && /^image\//.test(i.type));
-  if (img) { e.preventDefault(); const f = img.getAsFile(); try { imageChooser(await fileToImage(f)) } catch (err) { toast(T('Не удалось вставить изображение.', 'Could not paste the image.'), 'err') } return }
-  const txt = e.clipboardData.getData('text'); if (txt && /<svg[\s>]/i.test(txt)) { e.preventDefault(); try { importSVG(txt) } catch (err) { toast(T('Не удалось вставить SVG.', 'Could not paste the SVG.'), 'err') } return }
-  if (clip && clip.length) { e.preventDefault(); pasteClip() }
+  if (!$('#modal').hidden || inField()) return;
+  const cd = e.clipboardData; if (!cd) return; e.preventDefault();
+  const items = [...(cd.items || [])], img = items.find(i => i.kind === 'file' && /^image\//.test(i.type));
+  const data = { file: img ? img.getAsFile() : null, text: cd.getData('text/plain'), html: cd.getData('text/html') };
+  if (!data.file && !data.text && !data.html && DESK && DESK.readClipboard) { pasteCommand(); return }
+  if (!(await pasteSystem(data))) toast(T('В буфере обмена нет объектов, картинки или SVG.', 'The clipboard has no objects, picture or SVG.'));
 });
 
 document.addEventListener('keydown', e => { try { onKeyDown(e) } catch (err) { logError('key', err) } });
 document.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; cv.style.cursor = '' } });
 $('#modal').addEventListener('pointerdown', e => { if (e.target.id === 'modal') e.target._down = true });
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal' && e.target._down) closeModal(); e.target._down = false });
-new ResizeObserver(() => { resize(); if (tab === 'machine') drawMachineCanvas(); if (GS && GS.view === '2d') genDraw(); if (NS) nestDraw(); if (TR) traceDraw() }).observe($('#stage'));
+new ResizeObserver(() => { resize(); if (tab === 'machine') { MV.fitted = MV.fitted && true; drawMachineCanvas() } if (GS && GS.view === '2d') genDraw(); if (NS) nestDraw(); if (TR) traceDraw() }).observe($('#stage'));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { prevCache.clear(); draw() });
 window.addEventListener('error', e => logError('window', e.error || e.message));
 window.addEventListener('unhandledrejection', e => logError('promise', e.reason));
@@ -264,6 +297,7 @@ function tick(ts) {
     MC.pos = posAt(j.t); if (j.t >= P.total) { j.run = false; mlog('rx', T('Задание выполнено', 'Job complete') + ' — ' + fmtTime(P.total)); toast(T('Задание выполнено', 'Job complete')); renderRight(); renderChrome() }
     if (tab === 'machine') updateMachineLive();
   }
+  if (typeof gpPoll === 'function' && (GP.idx >= 0 || GP.learning) ) gpPoll(ts);
   requestAnimationFrame(tick);
 }
 
@@ -290,6 +324,7 @@ async function loadSample() {
   resize(); refresh(); fitPlate(0); draw();
   if (document.fonts) document.fonts.ready.then(() => draw());
   MC.state = 'demo'; mlog('rx', `${APP_NAME} ${APP_VERSION} · ` + T('демо-станок готов', 'demo machine ready'));
+  if (MCOPT.auto) setTimeout(() => autoConnect(T('при запуске', 'on start')), 1200);
   requestAnimationFrame(tick);
   if (recovery && recovery.data && recovery.data === saved) { toast(T('Программа была закрыта аварийно — последняя версия проекта восстановлена.', 'The app did not close properly — the latest version of the project was restored.')); recovery = null }
   if (recovery && recovery.data) {

@@ -24,5 +24,9 @@ contextBridge.exposeInMainWorld('skykerfDesktop', {
   fontData: (p) => ipcRenderer.invoke('skykerf:fontData', p),
   addFontFolder: () => ipcRenderer.invoke('skykerf:addFontFolder'),
   // real path of a dropped/selected file (Electron ≥ 32 has no File.path)
+  // clipboard contents for Paste (image as PNG data URL, text, html)
+  readClipboard: () => ipcRenderer.invoke('skykerf:readClipboard'),
+  // remember the machine's USB port so the next connection picks it without a dialog
+  preferSerial: (o) => ipcRenderer.invoke('skykerf:preferSerial', o),
   pathForFile: (file) => { try { return webUtils.getPathForFile(file) || null } catch (e) { return null } },
 });

@@ -12,6 +12,17 @@
 
 ![SkyKerf_Studio](build/icon.png)
 
+## Что нового в 0.4.0
+
+- **Станок:** работающий тест луча, понятные объяснения ошибок и аварий, «Стоп» без аварии и отдельная аварийная кнопка, автоподключение, большой вид стола с панелью функций снизу, управление с геймпада, удаление своих профилей.
+- **Фрезер:** режимы оси Z, в том числе для оргстекла; **лазер и фрезер на одном станке** со сменой головки.
+- **Импорт:** цвета и слои из CorelDRAW, Inkscape, DXF, PDF, PLT и LightBurn — окно «Слои из файла» показывает, что режется, а что гравируется. G-code можно превратить обратно в SVG, DXF, PNG или детали.
+- **Домики:** слоистый домик-картина, кукольный дом, мебель, конструктор в духе Tinkercad и Tiny Glade, ручные соединения.
+- **Новые мастера:** коробки и шкатулки (9 шаблонов), статуэтки, медали и украшения, игрушки; все тесты — в одной вкладке.
+- **Быстрее:** вычисления на Rust (WebAssembly), ускоренный разбор G-code.
+
+Подробности — [CHANGELOG.md](CHANGELOG.md).
+
 ## Что нового в 0.3.1
 
 - **Домики:** 14 стилей (деревенский, русская изба, японский чайный, современный, A-фрейм, фахверк, готика, голландский пряничный, сказочный, новогодний, крепость, башня, амбар, sci-fi) × 8 назначений (декор, чайный домик, шкатулка, органайзер, копилка, скворечник, кормушка, светильник); два назначения можно совместить. Каждую деталь можно поменять: крыша (двускатная, мансардная, вальмовая, односкатная, плоская, зубцы), фронтон (треугольный, ступенчатый, фигурный), кровля, резные карнизы и причелины, украшение конька, труба, отделка стен, узоры, окна (10 форм × 8 переплётов), ставни и наличники, двери, двор с заборчиком.
@@ -123,6 +134,7 @@ tests/                  модульные тесты (node --test)
 
 **SkyKerf_Studio** (formerly Kerf Studio) is an MIT-licensed CAD/CAM app for laser engravers/cutters and CNC routers: drawing on real sheets with no-go zones, one shared nesting engine (one sheet / several sheets / current sheet / manual, with reports and saved variants), postprocessor-based G-code export with validation and production packages, explicit laser process types and kerf compensation, a material library with verification statuses and per-machine values, drag-and-drop import (SVG, DXF, PNG, JPEG, BMP, WebP, TIFF, STL, OBJ, G-code) with colour tracing, system fonts and text on an arc, parametric buildings and boxes with fit profiles, 3D relief for routers, and GRBL machine control with read-only controller detection.
 
+- **New in 0.4.0:** working test fire, explained GRBL errors and alarms, a stop that keeps position plus a separate emergency stop, auto-connect, a large bed view with a bottom tool dock, gamepad control; router Z strategies (incl. acrylic) and a combined laser + router mode; colours and layers kept on import from CorelDRAW, Inkscape, DXF, PDF, PLT and LightBurn; G-code back to SVG/DXF/PNG; layered house pictures, dollhouses, doll furniture and a Tinkercad / Tiny Glade-style constructor; boxes, statuettes and medals, toys; Rust/WebAssembly kernels for speed.
 - **New in 0.3.1:** a house generator with 14 styles × 8 uses (tea house, box, organizer, piggy bank, birdhouse, feeder, lantern; two can be combined) and every detail adjustable; photo frames and signs with many shapes, borders, corners and any installed font; import of CorelDRAW CDR (v6–X8+), PDF / PDF-compatible AI, HPGL/PLT, LightBurn and SVGZ (see [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md)); passes and other values can be overridden in auto mode; all fonts on the computer; laser-only / router-only badges; fixed context menu on Windows and the power test.
 - **Download:** Releases — Windows installer/portable `.exe`, Linux `.AppImage`/`.deb`.
 - **Build on GitHub:** see [docs/BUILD_GITHUB.ru.md](docs/BUILD_GITHUB.ru.md) (Russian) — in short: Actions → *Build desktop* → *Run workflow*, or publish a Release.

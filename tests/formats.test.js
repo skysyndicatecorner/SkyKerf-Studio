@@ -78,3 +78,65 @@ test('HPGL: 40 units per millimetre, absolute and relative moves, circles', () =
   assert.deepEqual(bbox([sh[1]]), [20, 0, 30, 0]);
   assert.deepEqual(bbox([sh[2]]), [40, 40, 60, 60]);
 });
+
+/* ---- colours and layers survive the import (cut / engrave meaning from the source program) ---- */
+function lodaN(type, args) { // args: [[argType, Buffer]], types are stored in reverse order
+  const n = args.length, head = 20, sArgs = head, sTypes = sArgs + 4 * n, d0 = sTypes + 4 * n; let off = d0; const offs = [];
+  for (const [, b] of args) { offs.push(off); off += b.length }
+  return Buffer.concat([u32(off), u32(n), u32(sArgs), u32(sTypes), u32(type), ...offs.map(u32), ...args.map(a => u32(a[0])).reverse(), ...args.map(a => a[1])]);
+}
+function outlRec(id, rgb, width, none) { // CorelDRAW X3+ (version >= 1300) outline record
+  const body = Buffer.alloc(2 + 2 + 2 + 4 + 2 + 2 + 4 + 46 + 12); let o = 0;
+  body.writeUInt16LE(none ? 1 : 2, o); o += 6; body.writeInt32LE(Math.round(width * 10000), o); o += 4; body.writeUInt16LE(100, o); o += 4; o += 4 + 46;
+  body.writeUInt16LE(5, o); body.writeUInt16LE(5, o + 2); body[o + 8] = rgb[2]; body[o + 9] = rgb[1]; body[o + 10] = rgb[0];
+  return Buffer.concat([u32(id), u32(3), u32(4), u32(0), u32(1), u32(body.length), body]);
+}
+function fildRec(id, rgb) { const b = Buffer.alloc(4 + 8 + 2 + 13 + 12); b.writeUInt32LE(id, 0); b.writeUInt16LE(rgb ? 1 : 0, 12); if (rgb) { const o = 27; b.writeUInt16LE(5, o); b[o + 8] = rgb[2]; b[o + 9] = rgb[1]; b[o + 10] = rgb[0] } return b }
+test('CDR: outline colour, width and solid fill are read for every object', async () => {
+  const ver = 1700, sq = curve([[0, 0], [10, 0], [10, 10], [0, 10]], [0x00, 0x40, 0x40, 0x48]);
+  const obj = (o, f) => list('obj ', chunk('flgs', u32(0)), list('lgob', chunk('loda', lodaN(3, [[0x1e, sq], [0x0a, u32(o)], [0x14, u32(f)]]))));
+  const vr = Buffer.alloc(2); vr.writeUInt16LE(ver);
+  const body = Buffer.concat([chunk('vrsn', vr), chunk('outl', outlRec(1, [255, 0, 0], .0762)), chunk('outl', outlRec(2, [0, 0, 0], .2)), chunk('outl', outlRec(3, [0, 0, 0], 0, true)), chunk('fild', fildRec(1, null)), chunk('fild', fildRec(2, [0, 0, 0])),
+    list('page', chunk('flgs', u32(0)), list('gobj', list('layr', chunk('flgs', u32(0x98000000)), obj(1, 1), obj(2, 1), obj(3, 2))))]);
+  const file = Buffer.concat([Buffer.from('RIFF'), u32(body.length + 4), Buffer.from('CDR' + String.fromCharCode(0x41 + ver / 100 - 10)), body]);
+  const r = await parseCDR(file, inflate, inflateRaw), st = r.pages.flatMap(p => p.shapes).map(s => s.style);
+  assert.equal(st.length, 3);
+  assert.deepEqual(st[0], { stroke: '#ff0000', sw: .0762, fill: null });
+  assert.deepEqual(st[1], { stroke: '#000000', sw: .2, fill: null });
+  assert.deepEqual(st[2], { stroke: null, sw: 0, fill: '#000000' });
+});
+test('CDR: colour models (CMYK, RGB, grey) convert to screen colours', () => {
+  const { cdrColor } = require('../src/js/cdr.js');
+  assert.equal(cdrColor(2, [0, 0, 0, 100]), '#000000'); assert.equal(cdrColor(2, [0, 100, 100, 0]), '#ff0000');
+  assert.equal(cdrColor(3, [255, 0, 255, 0]), '#00ff00'); assert.equal(cdrColor(5, [0, 0, 255, 0]), '#ff0000');
+  assert.equal(cdrColor(9, [255, 0, 0, 0]), '#ffffff');
+});
+test('PDF: stroke and fill colours and line width are kept', async () => {
+  const r = await parsePDF(pdf('1 0 0 RG 0.2 w 0 0 m 10 0 l 10 10 l h S 0 0 0 1 k 20 20 10 10 re f 0 0 1 RG 0.5 g 40 40 10 10 re B'), inflate);
+  const st = r.pages[0].shapes.map(s => s.style);
+  assert.equal(st[0].stroke, '#ff0000'); assert.equal(st[0].fill, null); assert.ok(Math.abs(st[0].sw - .2 * 25.4 / 72) < 1e-6);
+  assert.equal(st[1].stroke, null); assert.equal(st[1].fill, '#000000');
+  assert.equal(st[2].stroke, '#0000ff'); assert.equal(st[2].fill, '#808080');
+});
+test('HPGL: pen numbers become colours', () => {
+  const st = parseHPGL('IN;SP2;PU0,0;PD400,0;SP5;PU0,400;PD400,400;').pages[0].shapes.map(s => s.style);
+  assert.equal(st[0].stroke, '#ff0000'); assert.equal(st[1].stroke, '#0000ff'); assert.equal(st[1].name, 'Pen 5');
+});
+test('Import layers: red lines → cut, blue → score, dark fills → engrave; remembered choices win', () => {
+  const { load } = require('./harness'); const G = load(['impmap.js']);
+  G.__eval(`S = blankState(MACHINES[0])`);
+  const mk = st => `{ paths: [rectPts(0, 0, 10, 10)], closed: true, style: ${JSON.stringify(st)} }`;
+  const r = G.__eval(`impSuggest(impGroups([${mk({ stroke: '#ff0000', sw: .08 })}, ${mk({ stroke: '#0000ff', sw: .08 })}, ${mk({ stroke: null, fill: '#000000' })}, ${mk({ stroke: '#00ff00', name: 'Шаблон' })}])).map(g => [g.stroke || g.fill, g.op])`);
+  assert.deepEqual(Object.fromEntries(r), { '#ff0000': 'cut', '#0000ff': 'mark', '#000000': 'fill', '#00ff00': 'guide' });
+  G.__eval(`store.set('impMap', JSON.stringify({ '#ff0000/-': 'vector' }))`);
+  const r2 = G.__eval(`impSuggest(impGroups([${mk({ stroke: '#ff0000' })}, ${mk({ stroke: '#000000' })}])).map(g => [g.stroke, g.op])`);
+  assert.deepEqual(Object.fromEntries(r2), { '#ff0000': 'vector', '#000000': 'cut' });
+});
+test('Import layers: LightBurn cut settings set the layer power and speed', () => {
+  const { load } = require('./harness'); const G = load(['impmap.js']);
+  G.__eval(`S = blankState(MACHINES[0])`);
+  const r = G.__eval(`(() => { const out = [{ paths: [rectPts(0, 0, 10, 10)], closed: true, style: { stroke: '#ff0000', name: 'C02', lb: { index: 2, kind: 'Cut', power: 80, speed: 10, passes: 2 } } }, { paths: [rectPts(2, 2, 3, 3)], closed: true, style: { stroke: '#0000ff', name: 'C01', lb: { index: 1, kind: 'Scan', power: 20, speed: 200, interval: .1 } } }];
+    const gs = impSuggest(impGroups(out)); impApply(gs, true, false); return out.map(o => { const L = S.layers[o.layer]; return [L.type, L.auto, L.laser.power, L.laser.speed, L.laser.passes, L.color, L.name] }) })()`);
+  assert.deepEqual(r[0], ['cut', false, 80, 600, 2, '#ff0000', 'C02']);
+  assert.deepEqual(r[1].slice(0, 4), ['fill', false, 20, 12000]);
+});

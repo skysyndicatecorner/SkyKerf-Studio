@@ -5,7 +5,7 @@
    named undo/redo history, serialization + migration, assets, dialogs
    ============================================================================ */
 const APP_NAME = 'SkyKerf_Studio';
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.4.0';
 const FORMAT_VERSION = 3;
 
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -47,6 +47,15 @@ const deepCopy = o => JSON.parse(JSON.stringify(o));
 
 /* ============================== icons ============================== */
 const ICON = {
+  gamepad: '<path d="M6 6h8c2.5 0 3.6 2.4 4 5s-.4 4.5-2 4.5c-1.3 0-2-1.3-3-2.3H7c-1 1-1.7 2.3-3 2.3-1.6 0-2.4-1.9-2-4.5S3.5 6 6 6z"/><path d="M6 9v3M4.5 10.5h3"/><circle cx="13" cy="9.5" r=".6"/><circle cx="14.6" cy="11.2" r=".6"/>',
+  fire: '<path d="M10 2.5c.5 3-3.5 4.5-3.5 8.5a3.5 3.5 0 007 0c0-1.8-1-3-1.8-3.8.2 1.6-.6 2.6-1.4 2.8.6-2.6-.3-5.4-.3-7.5z"/>',
+  estop: '<circle cx="10" cy="10" r="7.5"/><path d="M7 7l6 6M13 7l-6 6"/>',
+  toy: '<rect x="3" y="9" width="14" height="5" rx="1.5"/><path d="M6 9l2-4h4l2 4"/><circle cx="6.5" cy="15" r="1.8"/><circle cx="13.5" cy="15" r="1.8"/>',
+  figure: '<circle cx="10" cy="4.5" r="2"/><path d="M10 6.5v6M6.5 9h7M10 12.5l-3 4M10 12.5l3 4"/><path d="M5 18h10"/>',
+  medal: '<circle cx="10" cy="12" r="5"/><path d="M7 7.5L5 2h3l2 4 2-4h3l-2 5.5"/><path d="M10 9.5l.8 1.7 1.8.2-1.3 1.2.4 1.8-1.7-.9-1.7.9.4-1.8-1.3-1.2 1.8-.2z"/>',
+  book: '<path d="M3 4.5c2-1 5-1 7 .5v11c-2-1.5-5-1.5-7-.5zM17 4.5c-2-1-5-1-7 .5v11c2-1.5 5-1.5 7-.5z"/>',
+  chair: '<path d="M6 3v8h8V3M5 11h10v2H5zM6 13v5M14 13v5"/>',
+  shapes: '<rect x="2.5" y="10" width="7" height="7"/><path d="M13.5 2.5l4 7h-8z"/><circle cx="14" cy="14" r="3.3"/>',
   select: '<path d="M5 3l11 7-5 1.2 3 5.3-2 1.1-3-5.3L5 16z"/>',
   rect: '<rect x="3.5" y="5.5" width="13" height="9" rx="1.2"/>',
   ellipse: '<ellipse cx="10" cy="10" rx="7" ry="5.5"/>',

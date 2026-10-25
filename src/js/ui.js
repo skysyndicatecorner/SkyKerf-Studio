@@ -22,6 +22,7 @@ function refresh() {
   document.body.classList.toggle('simple', mode === 'simple');
   if (tab === 'cam' || tab === 'gcode' || tab === 'machine') ensurePreview();
   renderLeft(); renderRight(); renderChrome(); renderStatus(); draw();
+  if (tab === 'machine') renderMachineView();
 }
 function scheduleSave() { clearTimeout(saveT); saveT = setTimeout(saveLocal, 500) }
 let saveWarned = false;
@@ -87,7 +88,7 @@ function renderTop() {
 const TOOLS_UI = () => [['select', 'V', T('Выбор и перемещение', 'Select & move')], ['hand', 'H', T('Панорама', 'Pan')], null, ['rect', 'R', T('Прямоугольник (Shift — квадрат)', 'Rectangle (Shift = square)')], ['ellipse', 'E', T('Эллипс (Shift — круг)', 'Ellipse (Shift = circle)')], ['polygon', 'P', T('Многоугольник', 'Polygon'), 1], ['star', 'S', T('Звезда', 'Star'), 1], ['line', 'L', T('Линия', 'Line'), 1], ['pen', 'N', T('Ломаная (Enter — завершить)', 'Polyline (Enter to finish)')], ['text', 'T', T('Текст', 'Text')], null, ['measure', 'M', T('Рулетка', 'Measure'), 1], ['zone', 'B', T('Запретная зона листа', 'Sheet no-go zone'), 1]];
 function renderChrome() {
   renderTop(); const isM = tab === 'machine';
-  $('#cv').hidden = isM; $('#mach').hidden = !isM; $('#stage').classList.toggle('machmode', isM);
+  $('#cv').hidden = isM; $('#mach').hidden = !isM; $('#stage').classList.toggle('machmode', isM); $('#app').classList.toggle('machtab', isM);
   const tb = $('#toolbar'); tb.hidden = tab !== 'cad';
   if (tab === 'cad') tb.innerHTML = TOOLS_UI().map(t => t ? `<button data-tool="${t[0]}" class="${t[3] ? 'pro' : ''}" aria-pressed="${tool === t[0]}" title="${t[2]} (${t[1]})" aria-label="${t[2]}">${ic(t[0], 19)}</button>` : '<hr>').join('');
   const vb = $('#viewbar'); vb.hidden = isM;
@@ -136,8 +137,8 @@ function matOptions(type, cur) {
 }
 
 /* ============================== LEFT PANE ============================== */
-const WIZ = () => [['building', 'house'], ['box', 'box'], ['slicer', 'slices'], ['layered', 'layers'], ['frame', 'frame'], ['sign', 'sign'], ['puzzle', 'puzzle'], ['gear', 'gear'], ['qr', 'qr'], ['hinge', 'hinge'], ['test', 'test'], ['kerf', 'kerf'], ['joint', 'joint'], ['relief', 'relief']];
-function wizName(k) { if (k === 'slicer') return [T('3D-модель → слои', '3D model → layers'), T('STL/OBJ: стопка или решётка, штифты', 'STL/OBJ: stacked or interlocked, dowels')]; if (k === 'relief') return [T('3D-рельеф из фото', '3D relief from a photo'), T('Фрезер: черновая и чистовая', 'Router: roughing and finishing')]; const g = GENS[k]; return [g.name(), g.desc()] }
+const WIZ = () => [['building', 'house'], ['dollhouse', 'chair'], ['box', 'box'], ['boxkit', 'book'], ['slicer', 'slices'], ['layered', 'layers'], ['awards', 'medal'], ['toys', 'toy'], ['frame', 'frame'], ['sign', 'sign'], ['puzzle', 'puzzle'], ['gear', 'gear'], ['qr', 'qr'], ['hinge', 'hinge'], ['tests', 'test'], ['relief', 'relief']];
+function wizName(k) { if (k === 'tests') return [T('Тесты и калибровка', 'Tests & calibration'), T('Мощность, фокус, шаг строк, рез, посадка, подача', 'Power, focus, interval, kerf, fit, feed')]; if (k === 'slicer') return [T('3D-модель → слои', '3D model → layers'), T('STL/OBJ: стопка или решётка, штифты', 'STL/OBJ: stacked or interlocked, dowels')]; if (k === 'relief') return [T('3D-рельеф из фото', '3D relief from a photo'), T('Фрезер: черновая и чистовая', 'Router: roughing and finishing')]; const g = GENS[k]; return [g.name(), g.desc()] }
 /* Features tied to one machine type carry a badge in the bottom-right corner (laser or
    router icon). They stay clickable: on the other machine type a notice explains it and
    offers to switch. */
@@ -160,18 +161,19 @@ function renderLeft() {
   if (tab === 'cad') return renderLeftCad(el);
   if (tab === 'cam') return renderLeftCam(el);
   if (tab === 'gcode') return renderLeftGcode(el);
-  renderLeftMachine(el);
+  el.innerHTML = '';
 }
 function renderLeftCad(el) {
   const used = usedLayers();
-  const lay = used.map(L => { const n = S.shapes.filter(s => s.layer === L.id).length; return `<div class="li${L.show ? '' : ' off'}" data-act="pickLayer" data-l="${L.id}"><span class="sw" style="background:${L.color}"></span><span class="nm">${esc(layerName(L))}</span><span class="meta">${n} · ${esc(isLaser() ? ltypeName(L.type) : layerOut(L) ? cncOpName(L.cnc.op) : ltypeName('guide'))}</span><button class="mini" data-act="eye" data-l="${L.id}" title="${T('Показать/скрыть', 'Show/hide')}">${ic(L.show ? 'eye' : 'eyeoff', 15)}</button></div>` }).join('') || `<p class="note">${T('Слои появятся, когда вы что-нибудь нарисуете.', 'Layers appear once you draw something.')}</p>`;
+  const layHead = used.length ? `<div class="lhead"><span></span><span>${T('Слой', 'Layer')}</span><span title="${T('Будет резать / гравировать', 'Will be cut / engraved')}">${T('Вывод', 'Output')}</span><span title="${T('Видно на столе', 'Visible on the bed')}">${T('Вид', 'View')}</span></div>` : '';
+  const lay = used.map(L => { const n = S.shapes.filter(s => s.layer === L.id).length; return `<div class="li${L.show ? '' : ' off'}" data-act="pickLayer" data-l="${L.id}"><span class="sw" style="background:${L.color}"></span><span class="nm">${esc(layerName(L))}</span><span class="meta">${n} · ${esc(isLaser() ? ltypeName(L.type) : layerOut(L) ? cncOpName(L.cnc.op) : ltypeName('guide'))}</span><label class="sw2" title="${T('Вывод: будет ли слой резаться/гравироваться', 'Output: is the layer cut/engraved')}"><input type="checkbox" data-act="lout" data-l="${L.id}" ${L.on ? 'checked' : ''}><i></i></label><label class="sw2 vis" title="${T('Видимость на столе', 'Visible on the bed')}"><input type="checkbox" data-act="eye" data-l="${L.id}" ${L.show ? 'checked' : ''}><i></i></label></div>` }).join('') || `<p class="note">${T('Слои появятся, когда вы что-нибудь нарисуете.', 'Layers appear once you draw something.')}</p>`;
   const sheets = S.sheets.map((sh, i) => { const n = S.shapes.filter(s => !s.parked && plateOf(s) === i).length, m = matById(sh.mat); return `<div class="li${i === curPlate ? ' on' : ''}" data-act="plate" data-v="${i}"><span class="sw" style="background:${m && m.color || 'var(--sheet-line)'}"></span><span class="nm">${esc(sheetName(sh, i))}<br><span class="meta">${fx(sh.w, 0)}×${fx(sh.h, 0)} · ${esc(matLabel(m, sh.thick))}</span></span><span class="meta">${n}</span><button class="mini" data-act="delSheet" data-v="${i}" title="${T('Удалить лист…', 'Delete sheet…')}" aria-label="${T('Удалить лист', 'Delete sheet')}" ${S.sheets.length < 2 && !n ? 'disabled' : ''}>${ic('trash', 14)}</button></div>` }).join('');
   const parked = S.shapes.filter(s => s.parked).length;
   el.innerHTML = sec(mode === 'simple' ? T('Что сделаем?', 'What shall we make?') : T('Мастера и генераторы', 'Wizards & generators'), wizHtml(mode !== 'simple')) +
     sec(T('Импорт', 'Import'), `<button class="btn block" data-act="import">${ic('open', 15)} ${T('Открыть файл…', 'Open a file…')} <span class="kbd">Ctrl+I</span></button><p class="note">${T('SVG, DXF, PNG, JPEG, BMP, WebP, TIFF, STL, OBJ, G-code. Файл можно просто перетащить в окно или вставить из буфера.', 'SVG, DXF, PNG, JPEG, BMP, WebP, TIFF, STL, OBJ, G-code. You can also drop a file onto the window or paste it.')}</p>`) +
     sec(T('Проект', 'Project'), `<div class="grid3"><button class="btn" data-act="newProj">${ic('newp', 15)} ${T('Новый', 'New')}</button><button class="btn" data-act="openProj">${ic('open', 15)} ${T('Открыть', 'Open')}</button><button class="btn" data-act="saveProj">${ic('save', 15)} ${T('Сохранить', 'Save')}</button></div>${projPath ? `<p class="note mono-s" title="${esc(projPath)}">${esc(projPath)}</p>` : ''}`, 'pro') +
     sec(T('Листы', 'Sheets'), `<div class="list">${sheets}</div><div class="grid2"><button class="btn" data-act="addSheet">${ic('plus', 14)} ${T('Добавить', 'Add')}</button><button class="btn" data-act="dupSheet">${ic('copy', 14)} ${T('Копия листа', 'Copy sheet')}</button></div>${parked ? `<button class="btn block" data-act="selParked">${ic('warn', 14)} ${T('Неразмещённые', 'Unplaced')}: ${parked}</button>` : ''}`, '', `<span class="sp"></span><em>${S.sheets.length}</em>`) +
-    sec(T('Слои', 'Layers'), `<div class="list">${lay}</div>`, 'pro', `<span class="sp"></span><em>${used.length}</em>`) +
+    sec(T('Слои', 'Layers'), `<div class="list">${layHead}${lay}</div>`, 'pro', `<span class="sp"></span><em>${used.length}</em>`) +
     `<div class="sec grow"><h3>${T('Объекты', 'Objects')} · ${esc(sheetName(sheetAt(curPlate), curPlate))}<span class="sp"></span><em id="objCount"></em></h3>
      <div class="inp"><span class="pre">${ic('search', 14)}</span><input id="objQ" placeholder="${T('Поиск по названию', 'Search by name')}" value="${esc(objQ)}" aria-label="${T('Поиск объектов', 'Search objects')}"></div>
      <div class="vlist" id="objList" tabindex="0" aria-label="${T('Список объектов', 'Object list')}"><div class="vinner" id="objInner"></div></div></div>`;
@@ -234,24 +236,11 @@ function renderLeftGcode(el) {
      <div class="grid2"><button class="btn" data-act="copyGc" ${P.lines.length > 1 ? '' : 'disabled'}>${ic('copy', 15)} ${T('Копировать', 'Copy')}</button><button class="btn" data-act="openGc">${ic('open', 15)} ${T('Открыть файл', 'Open file')}</button></div>
      ${P.file ? `<button class="btn block" data-act="backProj">${T('Вернуть G-code проекта', 'Back to project G-code')}</button>` : ''}
      <label class="chk"><input type="checkbox" id="followChk" ${P.follow ? 'checked' : ''}> ${T('Следить за текущей строкой', 'Follow the current line')}</label></div>
+    ${P.moves.length ? `<div class="sec"><h3>${T('Преобразовать G-code', 'Convert G-code')}${infoBtn('gcConv')}</h3><div class="grid2"><button class="btn" data-act="gcConv" data-v="cad" title="${T('Рабочие перемещения станут контурами в проекте', 'Cutting moves become outlines in the project')}">${ic('edit', 14)} ${T('В проект', 'To project')}</button><button class="btn" data-act="gcConv" data-v="pngcad" title="${T('Картинка гравировки в реальном размере', 'Engraving picture at real size')}">${ic('image', 14)} ${T('Картинкой', 'As picture')}</button><button class="btn" data-act="gcConv" data-v="svg">SVG</button><button class="btn" data-act="gcConv" data-v="dxf">DXF</button><button class="btn" data-act="gcConv" data-v="png">PNG 254 DPI</button><button class="btn" data-act="gcConv" data-v="png2">PNG 508 DPI</button></div></div>` : ''}
     <div class="sec gcsearch"><div class="inp"><span class="pre">${ic('search', 14)}</span><input id="gcQ" placeholder="${T('Поиск в коде: M3, F1500, LAYER…', 'Search code: M3, F1500, LAYER…')}" value="${esc(P.search || '')}" aria-label="${T('Поиск в G-code', 'Search G-code')}"><em id="gcHits">${P.search ? P.hits.length : ''}</em></div>
      <div class="grid2"><button class="btn" data-act="gcHit" data-v="-1">${ic('up', 14)} ${T('Пред.', 'Prev')}</button><button class="btn" data-act="gcHit" data-v="1">${ic('down', 14)} ${T('След.', 'Next')}</button></div></div>
     <div class="gcwrap"><div id="gcList" tabindex="0" aria-label="G-code"><div id="gcInner"></div></div></div>`;
   const gl = $('#gcList'); if (gl) { gl.addEventListener('scroll', renderGcList); renderGcList() }
-}
-function renderLeftMachine(el) {
-  const L = isLaser(), m = S.machine, dev = MC.mode === 'serial';
-  el.innerHTML = sec(T('Подключение', 'Connection'), `<div class="seg full"><button data-act="mcMode" data-v="demo" aria-pressed="${!dev}">${T('Демо-станок', 'Demo machine')}</button><button data-act="mcMode" data-v="serial" aria-pressed="${dev}">USB / Serial</button></div>
-   ${dev ? `${selF(T('Скорость порта', 'Baud rate'), 'id="baudSel"', [9600, 57600, 115200, 230400, 250000].map(b => [b, b]), MC.baud)}
-   <button class="btn block ${MC.connected ? '' : 'acc'}" data-act="mcConnect">${ic('link', 15)} ${MC.connected ? T('Отключить', 'Disconnect') : MC.state === 'lost' ? T('Переподключить', 'Reconnect') : T('Выбрать порт и подключить', 'Pick a port & connect')}</button>
-   ${MC.portInfo ? `<div class="kv"><span>USB</span><b>${MC.portInfo.vid}:${MC.portInfo.pid}</b><span>${T('Чип', 'Chip')}</span><b>${esc(MC.portInfo.chip || T('неизвестен', 'unknown'))}</b></div>` : ''}
-   <p class="note">${T('Web Serial: настольная версия, Chrome или Edge. Протокол GRBL 1.1. Подключение ничего не запускает и не двигает.', 'Web Serial: desktop app, Chrome or Edge. GRBL 1.1 protocol. Connecting never starts or moves anything.')}</p>`
-      : `<p class="note">${T('Демо-станок повторяет движения по рассчитанному G-code — удобно проверить задание до реального запуска.', 'The demo machine replays the generated G-code so you can check a job before a real run.')}</p>`}
-   <button class="btn block" data-act="mDetect" ${dev && !MC.connected ? 'disabled' : ''}>${ic('device', 15)} ${T('Считать сведения о контроллере', 'Read controller information')}</button>`, '', `<span class="sp"></span><span class="pill ${stateClass(!dev ? 'demo' : MC.state)}">${STATE_NAME(!dev ? 'demo' : MC.state)}</span>`) +
-    sec(T('Станок', 'Machine'), `<div class="kv"><span>${T('Профиль', 'Profile')}</span><b>${esc(m.name)}</b><span>${T('Поле', 'Work area')}</span><b>${m.w}×${m.h} ${MM()}</b><span>${T('Прошивка', 'Firmware')}</span><b>${esc(m.fwVersion ? 'GRBL ' + m.fwVersion : ({ grbl: 'GRBL 1.1', marlin: 'Marlin', fluidnc: 'FluidNC' })[m.fw] || 'GRBL')}</b>${L ? `<span>${T('Источник', 'Source')}</span><b>${esc(m.laserSource || '—')}${m.watts ? ' · ' + m.watts + ' ' + T('Вт', 'W') : ''}</b>` : ''}<span>${T('Постпроцессор', 'Postprocessor')}</span><b>${esc(postLabel(currentPost()))}</b></div>
-   ${m.confirmed === false ? `<div class="warnline">${ic('warn', 13)} ${T('Профиль — черновик: часть параметров не подтверждена.', 'Draft profile: some fields are not confirmed.')}</div>` : ''}
-   <button class="btn" data-act="settings">${ic('cog', 15)} ${T('Настройки станка', 'Machine settings')}</button>`) +
-    sec(T('Перед запуском', 'Before you start'), [['a', L ? T('Защитные очки под длину волны лазера', 'Laser-rated safety glasses on') : T('Заготовка надёжно закреплена', 'Stock is clamped down')], ['b', L ? T('Вытяжка и обдув включены, огнетушитель рядом', 'Extraction and air assist on, extinguisher nearby') : T('Фреза затянута, ноль Z выставлен', 'Bit is tight, Z zero is set')], ['c', L ? T('Не отхожу от станка во время работы', 'I will stay with the machine') : T('Очки надеты, руки вне рабочей зоны', 'Glasses on, hands clear')]].map(([k, t]) => `<label class="chk"><input type="checkbox" data-chk="${k}" ${MC.checks[k] ? 'checked' : ''}> ${t}</label>`).join('') + `<p class="note">${T('Программный «Стоп» не заменяет аппаратную аварийную кнопку.', 'The software Stop does not replace the hardware E-stop.')}</p>`);
 }
 
 /* ============================== RIGHT PANE ============================== */
@@ -407,12 +396,33 @@ function cncLayerHtml(L) {
   r.warn.forEach(w => { h += `<div class="warnline">${ic('warn', 13)} ${esc(w)}</div>` });
   if (prof) h += `<h4 class="sub">${T('Перемычки', 'Holding tabs')}</h4><div class="grid3">${kn(T('Кол-во', 'Count'), 'tabs', '', 1, 0, 24)}${kn(T('Высота', 'Height'), 'tabH', MM(), .1, .1)}${kn(T('Ширина', 'Width'), 'tabW', MM(), .5, .5)}</div><p class="note">${T('Перемычки держат деталь, чтобы она не вылетела на последнем проходе.', 'Tabs keep the part attached so it does not fly out on the last pass.')}</p>`;
   if (op === 'relief') h += `<p class="note">${T('Рельеф: черновая обработка этой фрезой, чистовая — сферической, заданной в параметрах рельефа.', 'Relief: roughing with this tool, finishing with the ball nose chosen in the relief settings.')}</p>`;
+  h += cncZHtml(L);
   return h;
+}
+/* Z axis behaviour: presets (acrylic etc.) or own values */
+function cncZHtml(L) {
+  const c = L.cnc, mode = resolveCnc(L, sheetAt(curPlate)).zMode || 'std', Z = Object.assign({}, CNC_Z_DEF, Z_PRESETS[mode] || {}, mode === 'custom' ? c : {}), cu = mode === 'custom';
+  const kz = (lab, k, unit, step, min, max) => numF(lab, `data-k="cnc.${k}" ${min != null ? `min="${min}"` : ''} ${max != null ? `max="${max}"` : ''} ${cu ? '' : 'disabled'}`, Z[k], unit, step);
+  const sz = (lab, k, opts) => selF(lab, `data-k="cnc.${k}" ${cu ? '' : 'disabled'}`, opts, Z[k]);
+  let h = `<h4 class="sub">${T('Ось Z: врезание и подъёмы', 'Z axis: entry and lifts')}${infoBtn('zMode')}</h4>` + selF(T('Режим', 'Mode'), 'data-k="cnc.zMode"', Z_MODES(), mode);
+  h += `<div class="grid2">${sz(T('Врезание', 'Entry'), 'entry', [['plunge', T('сверху', 'straight')], ['ramp', T('по наклонной', 'ramp')]])}${Z.entry === 'ramp' ? kz(T('Угол наклона', 'Ramp angle'), 'rampAng', '°', 1, 1, 45) : ''}
+    ${sz(T('Подъём между контурами', 'Lift between shapes'), 'retract', [['safe', T('на безопасную высоту', 'to safe height')], ['low', T('низко над заготовкой', 'just above the stock')]])}${Z.retract === 'low' ? kz(T('Зазор над заготовкой', 'Clearance'), 'clearH', MM(), .5, .3, 20) : ''}
+    ${sz(T('Подъём для стружки', 'Chip-clearing lift'), 'lift', [['none', T('нет', 'none')], ['pass', T('после каждого прохода', 'after each pass')], ['dist', T('через каждые N мм', 'every N mm')]])}${Z.lift === 'dist' ? kz(T('Каждые', 'Every'), 'liftEvery', MM(), 5, 5, 1000) : ''}
+    ${sz(T('Охлаждение', 'Coolant'), 'coolant', [['none', T('нет', 'none')], ['M7', T('туман (M7)', 'mist (M7)')], ['M8', T('обдув/СОЖ (M8)', 'air/flood (M8)')]])}${kz(T('Пауза разгона шпинделя', 'Spindle spin-up wait'), 'spinWait', T('с', 's'), .5, 0, 30)}</div>
+    <label class="chk"><input type="checkbox" data-kb="cnc.spring" ${Z.spring ? 'checked' : ''} ${cu ? '' : 'disabled'}> ${T('Чистовой проход без снятия глубины (контур)', 'Spring pass at full depth (profile)')}</label>`;
+  if (mode === 'acrylic') h += `<p class="note">${T('Оргстекло плавится от трения: врезание по наклонной, обдув, подъём после каждого прохода, чтобы стружка не наваривалась, и чистовой проход для прозрачной кромки. Берите однозаходную фрезу «для пластика», обороты ниже, подачу выше.', 'Acrylic melts from friction: ramp entry, air blast, a lift after each pass so chips do not weld, and a spring pass for a clear edge. Use a single-flute plastic bit, lower rpm, higher feed.')}</p>`;
+  else if (!cu) h += `<p class="note">${T('Чтобы изменить отдельные значения, выберите «Свои настройки» — они начнутся с текущего режима.', 'To change single values pick “Custom” — it starts from the current mode.')}</p>`;
+  return h;
+}
+function layerHeadSeg(L) {
+  if (!S.machine.combo) return '';
+  const h = layerHead(L);
+  return `<div class="seg full"><button data-act="layerHead" data-v="laser" aria-pressed="${h === 'laser'}">${ic('laser', 13)} ${T('Лазер', 'Laser')}</button><button data-act="layerHead" data-v="cnc" aria-pressed="${h === 'cnc'}">${ic('cnc', 13)} ${T('Фрезер', 'Router')}</button></div>`;
 }
 function renderRightCam(el) {
   const L = camSel != null ? S.layers[camSel] : null, st = P.stats, est = P.est, jw = (P.job && P.job.warn) || [];
   let h = '';
-  if (L) h += `<div class="sec"><h3><span class="sw" style="background:${L.color}"></span>${T('Операция', 'Operation')}<span class="sp"></span>${infoBtn('auto')}</h3><label class="fld pro"><span>${T('Название', 'Name')}</span><input class="plain" id="layerName" value="${esc(layerName(L))}"></label>${isLaser() ? laserLayerHtml(L) : cncLayerHtml(L)}</div>`;
+  if (L) h += `<div class="sec"><h3><span class="sw" style="background:${L.color}"></span>${T('Операция', 'Operation')}<span class="sp"></span>${infoBtn('auto')}</h3><label class="fld pro"><span>${T('Название', 'Name')}</span><input class="plain" id="layerName" value="${esc(layerName(L))}"></label>${layerHeadSeg(L)}${layerHead(L) === 'laser' ? laserLayerHtml(L) : cncLayerHtml(L)}</div>`;
   else h += sec(T('Операция', 'Operation'), `<p class="note">${T('Выберите операцию слева.', 'Pick an operation on the left.')}</p>`);
   h += sec(T('Итог листа', 'Sheet summary') + ' ' + (curPlate + 1), `<div class="statgrid"><div class="stat big"><span>${T('Время (оценка', 'Time (estimate')}${est && est.withAccel ? T(', с ускорениями', ', with acceleration') : ''})</span><b>${est ? fmtTime(est.time) : '—'}</b></div>
     <div class="stat"><span>${isLaser() ? T('Рабочий путь', 'Burn path') : T('Резание', 'Cutting')}</span><b>${est ? fmtLen(est.cut) : '—'}</b></div><div class="stat"><span>${T('Холостые', 'Travel')}</span><b>${est ? fmtLen(est.travel) : '—'}</b></div></div>
@@ -446,18 +456,7 @@ function legendHtml() {
   else h += `<div><i style="background:linear-gradient(90deg,hsl(205 85% 55%),hsl(35 95% 55%))"></i>${P.colorBy === 'feed' ? T('медленно → быстро', 'slow → fast') : P.colorBy === 'power' ? T('слабо → мощно', 'low → high power') : T('мелко → глубоко', 'shallow → deep')}</div>`;
   return h;
 }
-function renderRightMachine(el) {
-  const j = MC.job, prog = P.total ? j.t / P.total : 0;
-  el.innerHTML = `<div class="sec"><h3>${T('Задание', 'Job')}<span class="sp"></span><span class="pill ${j.run ? (j.pause ? 'warn' : 'ok') : 'mut'}">${j.run ? (j.pause ? T('пауза', 'paused') : T('выполняется', 'running')) : T('готово', 'ready')}</span></h3>
-   <div class="kv"><span>${T('Файл', 'File')}</span><b>${esc(P.file || T('лист ', 'sheet ') + (curPlate + 1))}</b><span>${T('Оценка времени', 'Estimated')}</span><b>${P.stats ? fmtTime(P.stats.time) : '—'}</b>${P.report ? `<span>${T('Проверка кода', 'Code check')}</span><b class="${P.report.errors.length ? 'bad' : ''}">${P.report.errors.length ? T('ошибки: ', 'errors: ') + P.report.errors.length : T('пройдена', 'passed')}</b>` : ''}</div>
-   <div class="prog"><i id="jobBar" style="width:${(prog * 100).toFixed(1)}%"></i></div>
-   <div class="kv"><span>${T('Прошло', 'Elapsed')}</span><b id="jobEl">${fmtTime(j.t)}</b><span>${T('Осталось', 'Remaining')}</span><b id="jobRem">${fmtTime(P.total - j.t)}</b><span>${T('Строка', 'Line')}</span><b id="jobLn">${j.line + 1} / ${P.lines.length}</b></div>
-   <div class="grid3"><button class="btn acc" data-act="jobStart" ${P.moves.length ? '' : 'disabled'}>${ic('play', 13)} ${j.run && j.pause ? T('Дальше', 'Resume') : T('Старт', 'Start')}</button><button class="btn" data-act="jobPause" ${j.run && !j.pause ? '' : 'disabled'}>${ic('pause', 13)} ${T('Пауза', 'Pause')}</button><button class="btn bad" data-act="jobStop" ${j.run ? '' : 'disabled'}>${ic('stop', 13)} ${T('Стоп', 'Stop')}</button></div>
-   <p class="note">${T('Задание запускается только кнопкой «Старт» после отметки всех пунктов «Перед запуском».', 'A job starts only with the Start button after every “Before you start” item is ticked.')}</p></div>
-   <div class="sec"><h3>${T('Коррекция', 'Overrides')}</h3><label class="fld"><span>${T('Подача', 'Feed')}: <b id="fovV">${MC.feedOv}%</b></span><input type="range" id="fovR" min="10" max="200" step="10" value="${MC.feedOv}"></label>
-   ${MC.mode === 'demo' ? `<label class="fld"><span>${T('Ускорение демо', 'Demo speed-up')}</span><div class="seg full">${[1, 5, 20, 60].map(r => `<button data-act="demoRate" data-v="${r}" aria-pressed="${MC.demoRate === r}">${r}×</button>`).join('')}</div></label>` : ''}</div>
-   <div class="sec pro"><h3>${T('Макросы', 'Macros')}<span class="sp"></span><button class="mini" data-act="editMacros" title="${T('Изменить', 'Edit')}">${ic('edit', 14)}</button></h3><div class="macros">${(S.macros || []).map((m, i) => `<button class="btn" data-act="macro" data-v="${i}" title="${esc(m.g)}">${esc(m.n)}</button>`).join('')}</div><p class="note">${T('Макросы отправляются только по нажатию и только из этого проекта.', 'Macros are sent only when you press them, and only from this project.')}</p></div>`;
-}
+function renderRightMachine(el) { el.innerHTML = '' }
 
 /* ============================== STATUS ============================== */
 const HINTS = () => ({ select: T('Клик — выбрать (группа целиком), Shift — добавить, рамка — выделить, правая кнопка — меню.', 'Click selects (whole group), Shift adds, drag a box to select, right-click for the menu.'), hand: T('Тяните, чтобы двигать вид.', 'Drag to move the view.'), rect: T('Тяните, чтобы нарисовать прямоугольник. Shift — квадрат.', 'Drag to draw a rectangle. Shift for a square.'), ellipse: T('Тяните от угла. Shift — круг.', 'Drag from a corner. Shift for a circle.'), polygon: T('Тяните от центра.', 'Drag from the centre.'), star: T('Тяните от центра.', 'Drag from the centre.'), line: T('Тяните от начала к концу. Shift — шаг 15°.', 'Drag from start to end. Shift snaps to 15°.'), pen: T('Клик — точка, Enter — завершить.', 'Click to add points, Enter to finish.'), text: T('Клик — поставить текст.', 'Click to place text.'), measure: T('Тяните, чтобы измерить.', 'Drag to measure.'), zone: T('Тяните, чтобы отметить запретную зону.', 'Drag to mark a no-go zone.') });

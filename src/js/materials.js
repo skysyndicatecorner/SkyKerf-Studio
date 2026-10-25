@@ -27,7 +27,8 @@ const BUILTIN_MATS = [
   { id: 'c-plywood-6', name: { ru: 'Фанера', en: 'Plywood' }, cat: 'wood', thick: 6, grain: 'x', color: '#d6b382', cnc: { chip: .05, doc: .5, rpm: 12000 }, fit: .1 },
   { id: 'c-mdf-6', name: { ru: 'МДФ', en: 'MDF' }, cat: 'board', thick: 6, grain: 'none', color: '#b9925f', cnc: { chip: .06, doc: .6, rpm: 12000 }, fit: .1 },
   { id: 'c-hardwood-10', name: { ru: 'Твёрдое дерево', en: 'Hardwood' }, cat: 'wood', thick: 10, grain: 'x', color: '#9c6b42', cnc: { chip: .04, doc: .4, rpm: 14000 }, fit: .1 },
-  { id: 'c-acrylic-3', name: { ru: 'Акрил', en: 'Acrylic' }, cat: 'plastic', thick: 3, grain: 'none', color: '#cfe4f2', cnc: { chip: .04, doc: .3, rpm: 15000 }, fit: .05 },
+  { id: 'c-acrylic-3', name: { ru: 'Оргстекло (акрил) литое', en: 'Acrylic, cast' }, cat: 'plastic', thick: 3, grain: 'none', color: '#cfe4f2', cnc: { chip: .04, doc: .3, rpm: 15000, zMode: 'acrylic' }, fit: .05, notes: { ru: 'Однозаходная фреза для пластика (O-flute), обдув. Режим оси Z «Оргстекло» включается сам.', en: 'Single-flute plastic bit (O-flute), air blast. The “Acrylic” Z mode is used automatically.' } },
+  { id: 'c-acrylic-ext-4', name: { ru: 'Оргстекло (акрил) экструзионное', en: 'Acrylic, extruded' }, cat: 'plastic', thick: 4, grain: 'none', color: '#d6ecf5', cnc: { chip: .035, doc: .25, rpm: 13000, zMode: 'acrylic' }, fit: .05, notes: { ru: 'Экструзионное плавится легче литого: обороты ниже, подача выше, обязательно обдув.', en: 'Extruded acrylic melts more easily than cast: lower rpm, higher feed, air blast is a must.' } },
   { id: 'c-pvc-4', name: { ru: 'ПВХ (только фрезер)', en: 'PVC (router only)' }, cat: 'plastic', thick: 4, grain: 'none', color: '#e8e8e8', cnc: { chip: .05, doc: .4, rpm: 12000 }, fit: .05, notes: { ru: 'Никогда не режьте ПВХ лазером: выделяется хлор.', en: 'Never laser-cut PVC: it releases chlorine.' } },
   { id: 'c-alu-3', name: { ru: 'Алюминий', en: 'Aluminium' }, cat: 'metal', thick: 3, grain: 'none', color: '#b8bec6', cnc: { chip: .015, doc: .15, rpm: 18000 }, fit: .05 },
 ].map(m => Object.assign({ status: 'unverified', builtin: true, byMachine: {}, notes: null, test: null, fit: 0 }, m));
@@ -96,6 +97,7 @@ const toolName = t => L10(t.name) || `${t.type} ⌀${t.d}`;
 function cncFeed(tool, mat, rpm) { const c = mat && mat.cnc ? mat.cnc.chip : .04; return Math.round(rpm * (tool.fl || 2) * c * (tool.d < 2 ? .6 : 1)) }
 function resolveCnc(L, sheet) {
   const c = L.cnc, tool = toolById(c.toolId), m = matById(sheet && sheet.mat), out = Object.assign({}, c, { tool, toolD: tool.d, src: 'manual', warn: [] });
+  if (!c.zMode) out.zMode = (m && m.cnc && m.cnc.zMode) || 'std'; // the material may suggest a Z strategy (acrylic)
   if (L.auto && m && m.cnc) {
     out.rpm = Math.min(m.cnc.rpm, S.machine.rpmMax || m.cnc.rpm); out.feed = Math.min(cncFeed(tool, m, out.rpm), S.machine.maxFeed || 1e9); out.plunge = Math.round(out.feed * .35);
     out.step = fx(Math.max(.1, tool.d * m.cnc.doc), 2); out.src = 'material';

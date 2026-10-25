@@ -5,14 +5,16 @@
    Supports CorelDRAW 6…X8+ files: plain RIFF (CDR6–X3), zipped riffData.cdr
    (X4–X5) and zipped root.dat with data streams (X6 and newer). Reads
    rectangles, ellipses and arcs, curves, polygons and stars with their
-   transforms. Text, bitmaps, effects and fills are skipped (reported).
+   transforms, plus the outline colour/width and solid fill colour of every
+   object, so cut and engrave lines keep the meaning they had in CorelDRAW.
+   Text, bitmaps, effects and gradient fills are skipped (reported).
    Written from the public description of the format (libcdr, MPL 2.0) —
    no code copied. Untested versions are reported as such.
    ============================================================================ */
 async function parseCDR(bytes, inflate, inflateRaw) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const str = (b, o, n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(b[o + i]); return s };
-  const warn = new Set(), pages = [];
+  const warn = new Set(), pages = [], OUTL = new Map(), FILD = new Map();
   let version = 0;
   if (str(u8, 0, 4) === 'RIFF') { version = riffVersion(u8); await walkRiff(u8, null) }
   else if (u8[0] === 0x50 && u8[1] === 0x4b) {
@@ -91,7 +93,10 @@ async function parseCDR(bytes, inflate, inflateRaw) {
     else if (id === 'flgs' && ctx.last === 'layr' && d.length >= 4) ctx.layerFlags = d[0] | d[1] << 8 | d[2] << 16 | d[3] << 24 >>> 0;
     else if (id === 'loda' && ctx.obj) readLoda(d, ctx);
     else if (id === 'bbox' && ctx.obj && parseCDR.debug && d.length >= 16) { const dv = new DataView(d.buffer, d.byteOffset, d.byteLength); ctx.obj.bbox = [0, 4, 8, 12].map(o => dv.getInt32(o, true) / 10000) }
-    else if (id === 'trfd') { const tr = readTrfd(d, ctx.version); if (ctx.obj) ctx.obj.trafos = tr; else if (ctx.stack.length) ctx.stack[ctx.stack.length - 1].trafos = tr }
+    else if (id === 'outl' && d.length >= 24) { try { const o = readOutl(d, ctx.version); OUTL.set(o.id, o) } catch (e) { } }
+    else if (id === 'fild' && d.length >= 8) { try { const f = readFild(d, ctx.version); FILD.set(f.id, f) } catch (e) { } }
+    if (parseCDR.probe) parseCDR.probe(id, d, ctx);
+    if (id === 'trfd') { const tr = readTrfd(d, ctx.version); if (ctx.obj) ctx.obj.trafos = tr; else if (ctx.stack.length) ctx.stack[ctx.stack.length - 1].trafos = tr }
   }
   function flush(ctx) {
     const o = ctx.obj; if (!o.geom || !ctx.page) return;
@@ -101,9 +106,11 @@ async function parseCDR(bytes, inflate, inflateRaw) {
     const tf = (x, y) => { for (const m of all) { const nx = m[0] * x + m[1] * y + m[2], ny = m[3] * x + m[4] * y + m[5]; x = nx; y = ny } return [x, y] };
     const paths = [], open = [];
     for (const s of subs) { const p = s.pts.map(q => tf(q[0], q[1])); if (p.length < 2) continue; (s.closed ? paths : open).push(p) }
+    const ol = OUTL.get(o.outl), fl = FILD.get(o.fild), style = { stroke: ol && !ol.none ? ol.color : null, sw: ol && !ol.none ? ol.w : 0, fill: fl && fl.color || null };
+    if (fl && fl.type > 1) warn.add('shading');
     const lf = ctx.layerFlags >>> 0, dbg = parseCDR.debug ? { oid: (parseCDR.oid = (parseCDR.oid || 0) + 1), bbox: o.bbox, type: o.type, trafos: o.trafos, poly: o.poly, raw: subs.map(s => s.pts.length) } : undefined;
-    if (paths.length) ctx.page.shapes.push({ paths, closed: true, lf, dbg });
-    for (const p of open) ctx.page.shapes.push({ paths: [p], closed: false, lf, dbg });
+    if (paths.length) ctx.page.shapes.push({ paths, closed: true, lf, style, dbg });
+    for (const p of open) ctx.page.shapes.push({ paths: [p], closed: false, lf, style, dbg });
   }
   /* ---------------- records ---------------- */
   function coordReader(d, ctx) {
@@ -116,7 +123,9 @@ async function parseCDR(bytes, inflate, inflateRaw) {
     if (n > 64 || sArgs + 4 * n > d.length || sTypes + 4 * n > d.length) return;
     const offs = [], types = []; for (let i = 0; i < n; i++) { offs.push(dv.getUint32(sArgs + 4 * i, true)); types.unshift(dv.getUint32(sTypes + 4 * i, true)) }
     const argAt = k => { const i = types.indexOf(k); if (i < 0) return null; const s = offs[i], e = offs.filter(x => x > s).sort((a, b) => a - b)[0] || d.length; return d.subarray(s, Math.max(s, e)) };
-    const C = argAt(0x1e); ctx.obj.type = type;
+    const C = argAt(0x1e); ctx.obj.type = type; if (parseCDR.probeLoda) parseCDR.probeLoda(types, argAt, ctx);
+    const u32a = k => { const a = argAt(k); return a && a.length >= 4 ? (a[0] | a[1] << 8 | a[2] << 16 | a[3] << 24) >>> 0 : null };
+    ctx.obj.outl = u32a(0x0a); ctx.obj.fild = u32a(0x14);
     try {
       if (type === 0x01 && C) ctx.obj.geom = readRect(C, ctx);
       else if (type === 0x02 && C) ctx.obj.geom = readEllipse(C, ctx);
@@ -200,6 +209,27 @@ async function parseCDR(bytes, inflate, inflateRaw) {
     else { let shift = base; for (let i = 0; i < P.np; i++) { if (i) shift = rot(shift, step); let cur = shift, all = shift.slice(); for (let j = 1; j < P.nA / P.np; j++) { cur = rot(cur, P.np * step); all = all.concat(cur) } out.push({ pts: all, closed: true }) } }
     return out.map(s => ({ closed: true, pts: s.pts.map(([x, y]) => [x * P.rx + P.cx, y * P.ry + P.cy]) }));
   }
+  /* ---------------- styles ---------------- */
+  /* colour record: model, palette, (4 bytes), value. Models: 2 CMYK %, 3/17 CMYK 0-255, 4 CMY, 5 RGB (stored B,G,R),
+     6 HSB, 7 HLS, 8 black/white, 9 grey. Others (spot palettes) are shown grey. */
+  function readColor(dv, o, ver) {
+    const model = dv.getUint16(o, true); o += 4; if (ver >= 1200) o += 4;
+    const c = [0, 1, 2, 3].map(k => dv.getUint8(o + k));
+    return cdrColor(model, c);
+  }
+  function readOutl(d, ver) {
+    const dv = new DataView(d.buffer, d.byteOffset, d.byteLength), id = dv.getUint32(0, true); let o = 4;
+    if (ver >= 1300) { let bid = 0, len = 0, guard = 0; while (bid !== 1) { o += len; if (o + 8 > d.length || guard++ > 64) throw new Error('outl'); bid = dv.getUint32(o, true); len = dv.getUint32(o + 4, true); o += 8 } }
+    const type = dv.getUint16(o, true); o += 6; if (ver < 1300 && ver >= 600) o += 2;
+    const w = Math.abs(dv.getInt32(o, true)) / 10000; o += 6; if (ver >= 600) o += 2; o += 4; o += ver >= 1300 ? 46 : ver >= 600 ? 52 : 32;
+    return { id, none: !!(type & 1), w, color: readColor(dv, o, ver) };
+  }
+  function readFild(d, ver) {
+    const dv = new DataView(d.buffer, d.byteOffset, d.byteLength), id = dv.getUint32(0, true); let o = 4; if (ver >= 1300) o += 8;
+    const type = dv.getUint16(o, true); o += 2; let color = null;
+    if (type === 1) { o += ver >= 1300 ? 13 : 2; color = readColor(dv, o, ver) }
+    return { id, type, color };
+  }
   /* point types: bit 0x40/0x80 = segment kind, 0x08 = closes the sub-path */
   function bez(P, Ty) {
     const subs = []; let cur = null, ctl = [];
@@ -230,5 +260,21 @@ async function parseCDR(bytes, inflate, inflateRaw) {
     return out;
   }
 }
+function cdrColor(model, c) {
+  const hx = (r, g, b) => '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+  const cmyk = (C, M, Y, K) => hx(255 * (1 - C) * (1 - K), 255 * (1 - M) * (1 - K), 255 * (1 - Y) * (1 - K));
+  const hsv = (h, s, v) => { const f = n => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)) }; return hx(f(5) * 255, f(3) * 255, f(1) * 255) };
+  switch (model) {
+    case 2: return cmyk(c[0] / 100, c[1] / 100, c[2] / 100, c[3] / 100);
+    case 3: case 17: return cmyk(c[0] / 255, c[1] / 255, c[2] / 255, c[3] / 255);
+    case 4: return hx(255 - c[0], 255 - c[1], 255 - c[2]);
+    case 5: return hx(c[2], c[1], c[0]);
+    case 6: return hsv((c[0] | c[1] << 8) % 360, c[2] / 255, c[3] / 255);
+    case 7: { const h = (c[0] | c[1] << 8) % 360, l = c[2] / 255, s = c[3] / 255, v = l + s * Math.min(l, 1 - l); return hsv(h, v ? 2 * (1 - l / v) : 0, v) }
+    case 8: return c[0] ? '#ffffff' : '#000000';
+    case 9: return hx(c[0], c[0], c[0]);
+    default: return '#808080';
+  }
+}
 const CDR_EXT = /\.cdr$/i;
-if (typeof module !== 'undefined' && module.exports) module.exports = { parseCDR, CDR_EXT };
+if (typeof module !== 'undefined' && module.exports) module.exports = { parseCDR, CDR_EXT, cdrColor };

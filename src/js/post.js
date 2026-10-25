@@ -57,22 +57,24 @@ const toAscii = s => String(s).replace(/[а-яё]/gi, ch => { const l = ch.toLow
 
 /* ============================ emitter ============================ */
 function emitGcode(job, post, opts) {
-  opts = Object.assign({ units: 'mm', ascii: false, stamp: true, project: '', sheetLabel: '' }, opts);
+  opts = Object.assign({ units: 'mm', ascii: false, stamp: true, project: '', sheetLabel: '', noHeader: false, noEnd: false }, opts);
   const m = job.machine, laser = post.kind === 'laser', inch = opts.units === 'inch', k = inch ? 1 / 25.4 : 1, dec = clamp(post.decimals ?? 3, 0, 6) + (inch ? 1 : 0);
   const sMax = post.sMax || m.smax || 1000, out = []; let ln = 0;
-  const num = v => { const r = +(v * k).toFixed(dec); return String(Object.is(r, -0) ? 0 : r) };
+  const PW = Math.pow(10, dec), num = v => { const r = Math.round(v * k * PW) / PW; return r === 0 ? '0' : String(r) };
   const emit = s => { if (post.lineNumbers) { ln += 10; out.push('N' + ln + ' ' + s) } else out.push(s) };
   const C = t => { let s = opts.ascii ? toAscii(t) : String(t); s = s.replace(/[()]/g, post.comment === '(' ? '' : '$&'); out.push(post.comment === '(' ? `(${s.replace(/\)/g, '')})` : `; ${s}`) };
   const ctx = { units: inch ? 'G20' : 'G21', sMax, safeZ: m.safeZ, machine: m.name, sheet: opts.sheetLabel, material: opts.matLabel || '' };
-  C(`${APP_NAME} ${APP_VERSION} | ${opts.project || ''} | ${opts.sheetLabel}`);
-  C(`machine: ${m.name} | post: ${L10(post.name)} v${post.version} | ${post.verified ? 'verified profile' : 'post profile NOT tested on hardware'}`);
-  if (opts.matLabel) C(`material: ${opts.matLabel}`);
-  if (opts.stamp) C(`generated: ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
-  C(`units: ${inch ? 'inch' : 'mm'}`);
+  if (!opts.noHeader) {
+    C(`${APP_NAME} ${APP_VERSION} | ${opts.project || ''} | ${opts.sheetLabel}`);
+    C(`machine: ${m.name} | post: ${L10(post.name)} v${post.version} | ${post.verified ? 'verified profile' : 'post profile NOT tested on hardware'}`);
+    if (opts.matLabel) C(`material: ${opts.matLabel}`);
+    if (opts.stamp) C(`generated: ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
+    C(`units: ${inch ? 'inch' : 'mm'}`);
+  } else C(`post: ${L10(post.name)} v${post.version}`);
   emit(inch ? 'G20' : 'G21');
   for (const l of post.header || []) if (String(l).trim()) emit(fillTpl(l, ctx));
-  for (const l of String(S.job.header || '').split('\n')) if (l.trim()) emit(fillTpl(l.trim(), ctx));
-  let x = null, y = null, z = null, f = null, s = null, laserOn = false, cutting = false, tool = null, spindle = false, curRpm = null;
+  if (!opts.noHeader) for (const l of String(S.job.header || '').split('\n')) if (l.trim()) emit(fillTpl(l.trim(), ctx));
+  let x = null, y = null, z = null, f = null, s = null, laserOn = false, cutting = false, tool = null, spindle = false, curRpm = null, coolant = null;
   const moveStr = (g, mv) => {
     let str = 'G' + g, any = false;
     if (mv.x != null && (x === null || Math.abs(mv.x - x) > 1e-7)) { str += ' X' + num(mv.x); x = mv.x; any = true }
@@ -109,7 +111,8 @@ function emitGcode(job, post, opts) {
         tool = op.tool.id;
       }
       const rpm = Math.round(Math.min(op.rpm || 0, m.rpmMax || 1e9));
-      if (!spindle || rpm !== curRpm) { emit(`M3 S${rpm}`); if (post.dwell) emit(`G4 P${post.dwell}`); spindle = true; curRpm = rpm }
+      if (!spindle || rpm !== curRpm) { emit(`M3 S${rpm}`); const dw = Math.max(post.dwell || 0, op.spinWait || 0); if (dw) emit(`G4 P${dw}`); spindle = true; curRpm = rpm }
+      if (op.coolant === 'M7' || op.coolant === 'M8') { if (coolant !== op.coolant) { emit(op.coolant); coolant = op.coolant } } else if (coolant) { emit('M9'); coolant = null }
       for (const mv of op.moves) {
         let str = moveStr(mv.g, mv); if (!str) continue;
         if (mv.g === 1 && mv.f != null && mv.f !== f) { str += ' F' + num(mv.f).replace(/\.0+$/, ''); f = mv.f }
@@ -118,7 +121,8 @@ function emitGcode(job, post, opts) {
     }
   }
   if (laser) { if (laserOn || cutting) emit('M5'); if (post.dynamic) emit('S0'); if (post.park) { const r = moveStr(0, { x: 0, y: 0 }); if (r) emit(r) } }
-  else { const r = moveStr(0, { z: m.safeZ }); if (r) emit(r); emit('M5'); if (post.coolant) emit('M9'); if (post.park) { const r2 = moveStr(0, { x: 0, y: 0 }); if (r2) emit(r2) } }
+  else { const r = moveStr(0, { z: m.safeZ }); if (r) emit(r); emit('M5'); if (post.coolant || coolant) emit('M9'); if (post.park && !opts.noEnd) { const r2 = moveStr(0, { x: 0, y: 0 }); if (r2) emit(r2) } }
+  if (opts.noEnd) return out.join('\n') + '\n';
   for (const l of post.footer || []) if (String(l).trim()) emit(fillTpl(l, ctx));
   for (const l of String(S.job.footer || '').split('\n')) if (l.trim()) emit(fillTpl(l.trim(), ctx));
   emit(post.end || 'M2');
@@ -126,6 +130,7 @@ function emitGcode(job, post, opts) {
 }
 
 /* ============================ validation (spec 5.3) ============================ */
+const GW = new Uint8Array(256), GV = new Float64Array(256);
 function validateGcode(text, post, machine, opts) {
   opts = Object.assign({ units: 'mm', stock: null }, opts);
   const errors = [], warns = [], infos = [], unknown = new Map(), lines = text.split(/\r?\n/);
@@ -133,13 +138,13 @@ function validateGcode(text, post, machine, opts) {
   let x = 0, y = 0, z = laser ? 0 : null, abs = true, inch = null, mode = null, f = null, s = 0, laserOn = false, spindle = false, sawCut = false, anyPower = false, outOfBounds = 0, rapidInMat = 0, g0laser = 0, overFeed = 0, deep = 0;
   const allowed = new Set(post.allowed || []);
   for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i], ln = raw.replace(/\(.*?\)/g, '').replace(/;.*/, '').replace(/^N\d+\s*/i, '').toUpperCase().trim(); if (!ln) continue;
-    if (/^\$/.test(ln)) { if (!post.allowSys) warns.push({ line: i + 1, msg: T(`Системная команда «${ln}» в коде задания.`, `System command “${ln}” inside the job.`) }); continue }
-    const toks = [...ln.matchAll(/([A-Z])\s*([-+]?\d*\.?\d+)/g)];
-    if (!toks.length || ln.replace(/([A-Z])\s*([-+]?\d*\.?\d+)/g, '').trim()) { errors.push({ line: i + 1, msg: T(`Не удалось разобрать строку: «${raw.trim().slice(0, 40)}».`, `Cannot parse line: “${raw.trim().slice(0, 40)}”.`) }); continue }
+    const raw = lines[i], fc = raw.trimStart().charCodeAt(0);
+    if (fc === 36) { const ln = raw.replace(/;.*/, '').trim(); if (!post.allowSys) warns.push({ line: i + 1, msg: T(`Системная команда «${ln}» в коде задания.`, `System command “${ln}” inside the job.`) }); continue } // $
+    const nt = gcScan(raw, GW, GV); if (nt === 0) continue;
+    if (nt < 0) { errors.push({ line: i + 1, msg: T(`Не удалось разобрать строку: «${raw.trim().slice(0, 40)}».`, `Cannot parse line: “${raw.trim().slice(0, 40)}”.`) }); continue }
     let nx = null, ny = null, nz = null, motion = false;
-    for (const [, w, vs] of toks) {
-      const v = parseFloat(vs);
+    for (let q = 0; q < nt; q++) {
+      const w = String.fromCharCode(GW[q]), v = GV[q]; if (w === 'N') continue;
       if (w === 'G' || w === 'M') { const code = w + (+v); if (!allowed.has(code)) unknown.set(code, (unknown.get(code) || i + 1)) }
       if (w === 'G') { if (v === 0 || v === 1 || v === 2 || v === 3) { mode = v; motion = true } else if (v === 90) abs = true; else if (v === 91) { abs = false; warns.push({ line: i + 1, msg: T('Относительные координаты G91 — проверьте, что контроллер их ожидает.', 'Relative mode G91 — make sure the controller expects it.') }) } else if (v === 20) { inch = true; if (opts.units === 'mm') errors.push({ line: i + 1, msg: T('В коде дюймы (G20), а экспорт настроен в миллиметрах.', 'The code uses inches (G20) but the export is set to millimetres.') }) } else if (v === 21) { inch = false; if (opts.units === 'inch') errors.push({ line: i + 1, msg: T('В коде миллиметры (G21), а экспорт в дюймах.', 'The code uses millimetres (G21) but the export is in inches.') }) } }
       else if (w === 'M') { if (v === 3 || v === 4) { if (laser) laserOn = true; else spindle = true } else if (v === 5) { laserOn = false; spindle = false } }
@@ -178,20 +183,49 @@ function validateGcode(text, post, machine, opts) {
 
 /* ============================ job cache (spec 14.1) ============================ */
 const GC = new Map();
-function jobKey(plate, post, opts) { return [S.rev, plate, post.id, post.version, opts.units, opts.ascii ? 1 : 0, opts.stamp ? 1 : 0].join('|') }
+function jobKey(plate, post, opts) { return [S.rev, plate, post.id, post.version, opts.units, opts.ascii ? 1 : 0, opts.stamp ? 1 : 0, (opts.only || []).join(',')].join('|') }
 function buildForPlate(plate, opts) {
   opts = Object.assign({ units: 'mm', ascii: false, stamp: S.job.stamp !== false }, opts || {});
   const post = opts.post || currentPost(), key = jobKey(plate, post, opts);
   if (GC.has(key)) return GC.get(key);
-  const job = planJob(plate), sh = sheetAt(plate), mat = matById(sh.mat);
-  const text = emitGcode(job, post, Object.assign({}, opts, { project: S.name || '', sheetLabel: `${sheetName(sh, plate)} ${fx(sh.w, 0)}x${fx(sh.h, 0)}`, matLabel: matLabel(mat, sh.thick) + (mat ? ` (${matStatusName(mat.status)})` : '') }));
-  const report = validateGcode(text, post, S.machine, { units: opts.units, stock: S.machine.type === 'cnc' ? sh.thick : null });
+  const job = planJob(plate, { only: opts.only }), sh = sheetAt(plate), mat = matById(sh.mat);
+  const eo = Object.assign({}, opts, { project: S.name || '', sheetLabel: `${sheetName(sh, plate)} ${fx(sh.w, 0)}x${fx(sh.h, 0)}`, matLabel: matLabel(mat, sh.thick) + (mat ? ` (${matStatusName(mat.status)})` : '') });
+  let text, report;
+  if (job.combo && new Set(job.ops.map(o => o.head)).size > 1) ({ text, report } = emitCombo(job, post, eo, sh));
+  else { const p2 = job.combo && job.ops.length && job.ops[0].head !== post.kind ? postFor(job.ops[0].head) : post; text = emitGcode(job, p2, eo); report = validateGcode(text, p2, S.machine, { units: opts.units, stock: job.ops.some(o => o.head === 'cnc') ? sh.thick : null }) }
   const est = estimateTime(job);
   const r = { plate, post, job, text, report, est, key, rev: S.rev, hash: hashStr(text.replace(/^; generated:.*$/m, '')) };
   if (GC.size > 12) GC.delete(GC.keys().next().value);
   GC.set(key, r); return r;
 }
 const isStale = r => !r || r.rev !== S.rev;
+/* combined laser + router machine: each head's operations are written with its own postprocessor;
+   between them the program stops (M0) so the head can be changed; GRBL laser mode ($32) is switched if asked */
+function postFor(kind) { const cur = currentPost(); if (cur.kind === kind) return cur; const m = S.machine; return postById(kind === 'laser' ? (m.laserPost || 'grbl_laser') : (m.cncPost || 'grbl_cnc')) }
+function emitCombo(job, post, eo, sh) {
+  const segs = []; for (const op of job.ops) { const last = segs[segs.length - 1]; if (last && last.head === op.head) last.ops.push(op); else segs.push({ head: op.head, ops: [op] }) }
+  const m = job.machine, parts = [], reports = []; let lineOff = 0;
+  segs.forEach((sg, i) => {
+    const p = postFor(sg.head), txt = emitGcode(Object.assign({}, job, { ops: sg.ops }), p, Object.assign({}, eo, { noHeader: i > 0, noEnd: i < segs.length - 1 }));
+    if (i > 0) {
+      const to = sg.head === 'laser' ? T('ЛАЗЕР', 'LASER') : T('ФРЕЗЕР', 'ROUTER'), blk = [`; ===== ${T('СМЕНА ГОЛОВКИ', 'HEAD CHANGE')} → ${to} =====`, 'M5', 'M9'];
+      if (sg.head === 'laser') blk.push(`G0 Z${fx(m.safeZ || 5, 3)}`);
+      if (m.comboSwitch32 !== false) blk.push('G4 P0.1', sg.head === 'laser' ? '$32=1' : '$32=0'); // dwell = wait until motion ends: GRBL accepts $ only when idle
+      blk.push(`; ${T('Установите', 'Mount the')} ${sg.head === 'laser' ? T('лазерный модуль, выставьте фокус', 'laser module, set the focus') : T('шпиндель с фрезой, выставьте ноль Z', 'spindle with the bit, set Z zero')}; ${T('затем «Продолжить»', 'then Resume')}`, 'M0');
+      parts.push(blk.join('\n') + '\n'); lineOff += blk.length;
+    }
+    const rep = validateGcode(txt, p, S.machine, { units: eo.units, stock: sg.head === 'cnc' ? sh.thick : null });
+    for (const k of ['errors', 'warns', 'infos']) for (const e of rep[k] || []) reports.push([k, Object.assign({}, e, { line: e.line ? e.line + lineOff : e.line })]);
+    parts.push(txt); lineOff += txt.split('\n').length - 1;
+  });
+  if (m.comboSwitch32 !== false) {
+    if (segs[0].head === 'laser') parts[0] = parts[0].replace(/\n(G21|G20)\n/, `\n; ${T('режим лазера', 'laser mode')}\n$32=1\n$1\n`);
+    if (segs[segs.length - 1].head === 'laser') { const k = parts.length - 1; parts[k] = parts[k].replace(/\n(M2|M30)\s*\n?$/, `\n; ${T('обратно в режим шпинделя', 'back to spindle mode')}\nG4 P0.1\n$32=0\n$1\n`) }
+  }
+  const report = { errors: [], warns: [], infos: [], lines: lineOff }; for (const [k, e] of reports) report[k].push(e); report.ok = !report.errors.length;
+  report.infos.push({ line: 0, msg: T(`Комбинированное задание: ${segs.length} участков, смена головки — пауза M0.`, `Combined job: ${segs.length} segments, head change pauses with M0.`) });
+  return { text: parts.join(''), report };
+}
 
 /* ============================ report & side files ============================ */
 function jobReportText(r, fileName, opts) {

@@ -82,6 +82,9 @@ function traceMask(mask, w, h) {
 
 /* ---------- Clipper wrappers ---------- */
 const CS = 1000, hasClip = () => typeof ClipperLib !== 'undefined';
+/* offsets with round joins add arc points to every arc vertex; without cleaning, repeated offsets grow the point count
+   (and the time) without bound. 0.01 mm is far below any laser or router tolerance. */
+const CLEAN = .01 * CS;
 const toC = paths => paths.filter(p => p.length > 2).map(p => p.map(q => ({ X: Math.round(q[0] * CS), Y: Math.round(q[1] * CS) })));
 const toCopen = paths => paths.filter(p => p.length > 1).map(p => p.map(q => ({ X: Math.round(q[0] * CS), Y: Math.round(q[1] * CS) })));
 const fromC = cp => cp.map(p => p.map(q => [q.X / CS, q.Y / CS])).filter(p => p.length > 2);
@@ -89,7 +92,7 @@ const normC = (paths, ft) => ClipperLib.Clipper.SimplifyPolygons(toC(paths), ft 
 function offsetPaths(paths, d, join) {
   if (!hasClip()) return paths.map(p => missOffset(p, d)).filter(Boolean);
   const co = new ClipperLib.ClipperOffset(2, .02 * CS); co.AddPaths(normC(paths), join === 'miter' ? ClipperLib.JoinType.jtMiter : ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  const sol = new ClipperLib.Paths(); co.Execute(sol, d * CS); return fromC(sol);
+  const sol = new ClipperLib.Paths(); co.Execute(sol, d * CS); return fromC(ClipperLib.Clipper.CleanPolygons(sol, CLEAN));
 }
 /* Offset each loop on its own (kerf "outside"/"inside" regardless of nesting). */
 function offsetEach(paths, d, join) { const out = []; for (const p of paths) for (const q of offsetPaths([p], d, join)) out.push(q); return out }
@@ -97,7 +100,7 @@ function offsetEach(paths, d, join) { const out = []; for (const p of paths) for
 function offsetOpen(paths, d) {
   if (!hasClip() || d <= 0) return [];
   const co = new ClipperLib.ClipperOffset(2, .02 * CS); co.AddPaths(toCopen(paths), ClipperLib.JoinType.jtRound, ClipperLib.EndType.etOpenRound);
-  const sol = new ClipperLib.Paths(); co.Execute(sol, d * CS); return fromC(sol);
+  const sol = new ClipperLib.Paths(); co.Execute(sol, d * CS); return fromC(ClipperLib.Clipper.CleanPolygons(sol, CLEAN));
 }
 function missOffset(p, d) {
   const n = p.length, s = area(p) > 0 ? 1 : -1, o = [];
@@ -210,4 +213,27 @@ function minDistPaths(A, B, cap = 1e9) {
   let d = cap;
   for (const p of A) for (const q of B) for (let i = 0; i < p.length; i += Math.max(1, p.length >> 7)) for (let j = 0; j < q.length; j++) { const e = distSeg(p[i], q[j], q[(j + 1) % q.length]); if (e < d) d = e }
   return d;
+}
+
+/* ---------- fast G-code line scanner (no regular expressions) ----------
+   Fills W (letter char codes) and V (values); returns the word count, 0 for an empty/comment line, -1 for junk.
+   Comments ";…" and "(…)" are skipped; the line-number word N is returned like any other word. */
+function gcScan(s, W, V) {
+  let n = 0, i = 0; const L = s.length;
+  while (i < L) {
+    let c = s.charCodeAt(i);
+    if (c === 32 || c === 9 || c === 13) { i++; continue }
+    if (c === 59) break; // ;
+    if (c === 40) { const j = s.indexOf(')', i); if (j < 0) break; i = j + 1; continue } // ( … )
+    if (c >= 97 && c <= 122) c -= 32;
+    if (c < 65 || c > 90) return -1;
+    i++; while (i < L && (s.charCodeAt(i) === 32 || s.charCodeAt(i) === 9)) i++;
+    let sign = 1, k = s.charCodeAt(i); if (k === 45) { sign = -1; i++ } else if (k === 43) i++;
+    let v = 0, digits = 0; k = s.charCodeAt(i);
+    while (k >= 48 && k <= 57) { v = v * 10 + (k - 48); digits++; i++; k = s.charCodeAt(i) }
+    if (k === 46) { i++; k = s.charCodeAt(i); let f = .1; while (k >= 48 && k <= 57) { v += (k - 48) * f; f *= .1; digits++; i++; k = s.charCodeAt(i) } }
+    if (!digits) return -1;
+    if (n >= W.length) return -1; W[n] = c; V[n] = sign * v; n++;
+  }
+  return n;
 }

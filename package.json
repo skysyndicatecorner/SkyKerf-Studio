@@ -1,7 +1,7 @@
 {
   "name": "skykerf-studio",
   "productName": "SkyKerf_Studio",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Open-source CAD/CAM for laser cutters and CNC routers: drawing on real sheets, nesting, toolpaths, postprocessors with validation, G-code preview, machine control, parametric generators, 3D model slicing.",
   "main": "main.js",
   "license": "MIT",

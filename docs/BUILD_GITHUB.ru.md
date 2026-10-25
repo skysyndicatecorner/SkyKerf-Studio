@@ -200,3 +200,17 @@ npm run dist:linux   # на Linux → dist/*.AppImage, dist/*.deb
 ## 11. macOS
 
 Официально не собирается. Если хотите портировать: добавьте в `package.json` раздел `"mac"` (цели `dmg`/`zip`), иконку `build/icon.icns`, задачу `macos-latest` в `build.yml` и, для распространения, подпись и нотаризацию Apple (секреты — только в Settings → Secrets). Pull request приветствуется — см. [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Модуль ускорения (Rust → WebAssembly)
+
+Тяжёлые вычисления (растрирование фото, размытие, нарезка 3D-моделей) лежат в `wasm/src/lib.rs`. Готовый модуль уже встроен в `src/js/wasm-bin.js` (base64, рядом SHA-256), поэтому для обычной сборки Rust **не нужен**. Если модуль не загрузится, программа выполнит те же вычисления на JavaScript, только медленнее.
+
+Пересобрать модуль после изменения `lib.rs`:
+
+```
+rustup target add wasm32-unknown-unknown
+sh wasm/build.sh          # cargo build + запись src/js/wasm-bin.js
+node --test tests/wasm.test.js
+```
+
+На GitHub это делает workflow **WebAssembly kernels** (`.github/workflows/wasm.yml`): он пересобирает модуль из исходников и проверяет, что результаты совпадают с JavaScript-версией. Отключить ускорение можно в «Станок и настройки → Скорость работы».

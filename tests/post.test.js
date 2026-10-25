@@ -63,3 +63,26 @@ test('custom postprocessor templates only accept whitelisted placeholders', () =
   const out = G.__eval(`fillTpl('; {sheet} {evil}', { sheet: 'S1', evil: 'M3 S1000' })`);
   assert.equal(out, '; S1 {evil}', 'unknown placeholders are left as text, never filled');
 });
+for (const mode of ['acrylic', 'deep', 'soft', 'custom']) {
+  test(`router Z mode «${mode}» validates and stays above the stock between shapes`, () => {
+    const G = load(); project(G, 'cnc3018');
+    G.__eval(`for (const L of S.layers) { L.cnc.zMode = '${mode}'; if ('${mode}' === 'custom') Object.assign(L.cnc, { entry: 'ramp', rampAng: 4, retract: 'low', clearH: 1.5, lift: 'dist', liftEvery: 30, spring: true, coolant: 'M7', spinWait: 3 }) } GC.clear()`);
+    const r = G.__eval(`(() => { const r = buildForPlate(0, { post: postById('grbl_cnc'), stamp: false }); return { errors: r.report.errors, text: r.text } })()`);
+    assert.deepEqual(r.errors, [], JSON.stringify(r.errors));
+    if (mode === 'acrylic') { assert.match(r.text, /\nM8\n/); assert.match(r.text, /G4 P2/); assert.match(r.text, /\nM9\n/) }
+    if (mode === 'custom') { assert.match(r.text, /\nM7\n/); assert.match(r.text, /G4 P3/) }
+    // a ramp entry means the first Z move into the material is combined with an XY move
+    if (mode !== 'std') assert.match(r.text, /G1 X-?[\d.]+ Y-?[\d.]+ Z-[\d.]+/);
+  });
+}
+test('combined laser + router job: head change with M0, both parts validate', () => {
+  const G = load(); project(G, 'cnc3018');
+  G.__eval(`S.machine.combo = true; S.machine.laserOff = [0, 0]; S.layers[2].head = 'laser'; S.layers[1].head = 'laser'; GC.clear()`);
+  const r = G.__eval(`(() => { const r = buildForPlate(0, { stamp: false }); return { errors: r.report.errors, text: r.text, heads: r.job.ops.map(o => o.head) } })()`);
+  assert.deepEqual(r.errors, [], JSON.stringify(r.errors));
+  assert.ok(r.heads.includes('laser') && r.heads.includes('cnc'));
+  assert.equal(r.heads.indexOf('cnc') > r.heads.lastIndexOf('laser'), true, 'laser work first');
+  assert.equal((r.text.match(/\nM0\n/g) || []).length, 1);
+  assert.match(r.text, /\$32=0/);
+  assert.equal((r.text.match(/^M2$|^M30$/gm) || []).length, 1, 'one program end');
+});

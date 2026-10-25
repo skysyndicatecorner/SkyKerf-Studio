@@ -68,7 +68,7 @@ function drawShapes(c, v, alpha, onlyPlate) {
     if (s.kind === 'image') { drawImageShape(c, v, s, alpha); continue }
     if (s.kind === 'relief') { drawReliefShape(c, v, s, alpha); continue }
     c.beginPath(); for (const p of s.paths) tracePath(c, p, s.closed, v);
-    const fill = s.closed && layerOut(L) && (isLaser() ? (L.type === 'fill' || L.type === 'raster') : (L.cnc.op === 'pocket' || L.cnc.op === 'vcarve'));
+    const fill = s.closed && layerOut(L) && (layerHead(L) === 'laser' ? (L.type === 'fill' || L.type === 'raster') : (L.cnc.op === 'pocket' || L.cnc.op === 'vcarve'));
     if (fill) { c.fillStyle = hexA(L.color, .16 * alpha); c.fill('evenodd') }
     c.globalAlpha = alpha * (s.parked ? .55 : 1); c.strokeStyle = L.color; c.lineWidth = sel.has(s.id) && tab === 'cad' ? 2 : 1.3; if (!layerOut(L) || !L.on) c.setLineDash([5, 4]); c.stroke(); c.setLineDash([]); c.globalAlpha = 1;
     if (s.lock && tab === 'cad') { const b = bboxOf(s.paths), [px, py] = w2s(b[2], b[3], v); c.fillStyle = css('--muted'); c.font = `11px ${css('--f-ui')}`; c.textAlign = 'right'; c.textBaseline = 'bottom'; c.fillText('🔒', px, py - 1) }
@@ -253,6 +253,7 @@ function openCtxMenu(cx, cy, w) {
       [locked ? 'unlock' : 'lock', locked ? 'unlock' : 'lock', locked ? T('Открепить', 'Unlock') : T('Закрепить (раскладка не сдвинет)', 'Lock (nesting will not move it)'), ''],
       ['rename', 'edit', T('Переименовать…', 'Rename…'), 'F2'],
       ss.length > 1 ? ['group', 'group', T('Сгруппировать', 'Group'), 'Ctrl+G'] : null, ss.some(s => s.g) ? ['ungroup', 'ungroup', T('Разгруппировать', 'Ungroup'), '⇧Ctrl+G'] : null, null,
+      ['copy', 'copy', T('Копировать', 'Copy'), 'Ctrl+C'], ['cut', 'split', T('Вырезать', 'Cut'), 'Ctrl+X'], ['paste', 'copy', T('Вставить', 'Paste'), 'Ctrl+V'], null,
       ['rotCcw', 'rotl', T('Повернуть −90°', 'Rotate −90°'), '['], ['rotCw', 'rotr', T('Повернуть +90°', 'Rotate +90°'), ']'], ['mirrorH', 'flip', T('Отразить по горизонтали', 'Flip horizontal'), '⇧H'], null,
       ['front', 'up', T('На передний план', 'Bring to front'), ''], ['back', 'down', T('На задний план', 'Send to back'), ''], ['nestSel', 'nest', T('Разложить по листам…', 'Nest onto sheets…'), ''],
       S.sheets.length > 1 ? ['moveSheet', 'sheet', T('Перенести на лист…', 'Move to sheet…'), ''] : null);
@@ -260,10 +261,10 @@ function openCtxMenu(cx, cy, w) {
     const gs = ss.find(s => s.g && S.groups[s.g]); if (gs && S.groups[gs.g].gen) items.push(null, ['regen', 'wand', T('Изменить параметры изделия…', 'Edit product parameters…'), '']);
     if (gs && S.groups[gs.g].src) items.push(['retrace', 'wand', T('Перетрассировать…', 'Re-trace…'), '']);
   } else if (z) items.push(['zoneDel', 'trash', T('Удалить запретную зону', 'Delete no-go zone'), '']);
-  else items.push(['paste', 'copy', T('Вставить', 'Paste'), 'Ctrl+V'], ['selAll', 'select', T('Выделить всё на листе', 'Select all on sheet'), 'Ctrl+A'], ['addPlate', 'plus', T('Добавить лист', 'Add sheet'), '']);
+  else items.push(['paste', 'copy', T('Вставить (объекты или картинку)', 'Paste (objects or a picture)'), 'Ctrl+V'], ['selAll', 'select', T('Выделить всё на листе', 'Select all on sheet'), 'Ctrl+A'], ['addPlate', 'plus', T('Добавить лист', 'Add sheet'), '']);
   m.innerHTML = items.filter((x, i, a) => x || (i && a[i - 1])).map(x => x ? `<button data-ctx="${x[0]}">${ic(x[1], 15)}<span>${x[2]}</span><kbd>${x[3]}</kbd></button>` : '<hr>').join('');
   m.hidden = false; const r = m.getBoundingClientRect(); m.style.left = Math.min(cx, innerWidth - r.width - 8) + 'px'; m.style.top = Math.min(cy, innerHeight - r.height - 8) + 'px';
-  m._zone = z; m.querySelector('button')?.focus();
+  m._zone = z; m._at = w; m.querySelector('button')?.focus();
 }
 async function ctxAction(a) {
   const m = $('#ctxMenu'), z = m._zone; hideCtx();
@@ -275,7 +276,7 @@ async function ctxAction(a) {
     case 'regen': { const s = selShapes().find(s => s.g && S.groups[s.g] && S.groups[s.g].gen); if (s) regenGroup(s.g); break }
     case 'retrace': { const s = selShapes().find(s => s.g && S.groups[s.g] && S.groups[s.g].src); if (s) retraceGroup(s.g); break }
     case 'zoneDel': if (z) { pushUndo(T('Удаление зоны', 'Delete zone')); sheetAt(z.plate).zones.splice(z.i, 1); changed() } break;
-    case 'paste': pasteClip(); break; case 'selAll': selectAllOnSheet(); break; case 'addPlate': addSheet(); break;
+    case 'paste': pasteCommand(m._at); break; case 'copy': copySel(); break; case 'cut': copySel(true); break; case 'selAll': selectAllOnSheet(); break; case 'addPlate': addSheet(); break;
   }
 }
 
@@ -336,8 +337,36 @@ function arraySel(cols, rows, gap) { const ss = selShapes(); if (!ss.length) ret
 function circArraySel(n, r) { const ss = selShapes(); if (!ss.length || n < 2) return; if (ss.some(s => s.kind === 'image' || s.kind === 'relief')) { toast(T('Круговой массив не работает с фото.', 'Circular arrays do not support photos.')); return } const b = selBox(), c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2 - r]; pushUndo(T('Круговой массив', 'Circular array')); const all = new Set(sel); for (let i = 1; i < n; i++)for (const id of cloneShapes(ss, 0, 0, 360 * i / n, c)) all.add(id); sel = all; changed(); toast(T(`Создано копий: ${n - 1}`, `${n - 1} copies created`)) }
 async function updateText(spec) { const s = selShapes()[0]; if (!s || s.kind !== 'text' || !String(spec.text).trim()) return; const prev = deepCopy(s); pushUndo(T('Изменение текста', 'Edit text'), 'text' + s.id); if (!(await rebuildText(s, spec))) { Object.assign(s, prev); toast(T('Не удалось построить текст этим шрифтом.', 'Could not build text with this font.'), 'err'); return } changed() }
 function selectAllOnSheet() { sel = new Set(S.shapes.filter(s => S.layers[s.layer].show && !s.parked && plateOf(s) === curPlate).map(s => s.id)); refresh() }
-function copySel() { clip = JSON.parse(JSON.stringify(selShapes())); if (clip.length) toast(T(`Скопировано объектов: ${clip.length}`, `Copied ${clip.length} objects`)) }
-function pasteClip() { if (!clip || !clip.length) return; pushUndo(T('Вставка', 'Paste')); sel = new Set(cloneShapes(clip, 10, -10)); clip = clip.map(s => ({ ...s, paths: mapPaths(s.paths, (x, y) => [x + 10, y - 10]) })); changed() }
+let clipMark = '';
+function copySel(cut) {
+  clip = JSON.parse(JSON.stringify(selShapes())); if (!clip.length) return;
+  // a marker in the system clipboard tells our own copy apart from a picture copied in a browser later
+  clipMark = 'SKYKERF-CLIP:' + Date.now(); try { navigator.clipboard.writeText(clipMark).catch(() => { }) } catch (e) { }
+  if (cut) delSel(); toast(cut ? T(`Вырезано объектов: ${clip.length}`, `Cut ${clip.length} objects`) : T(`Скопировано объектов: ${clip.length}`, `Copied ${clip.length} objects`));
+}
+/* Paste from the system clipboard: our own objects, a picture (from a browser, a screenshot, an editor), SVG code or SVG/HTML markup. */
+async function pasteSystem(data, at) {
+  data = data || {};
+  if (data.text && clipMark && data.text.trim() === clipMark && clip && clip.length) { pasteClip(at); return true }
+  if (data.file) { try { if (tab !== 'cad') switchTab('cad'); imageChooser(await fileToImage(data.file)) } catch (err) { toast(T('Не удалось вставить изображение.', 'Could not paste the image.'), 'err') } return true }
+  if (data.image) { try { const blob = await (await fetch(data.image)).blob(); if (tab !== 'cad') switchTab('cad'); imageChooser(await fileToImage(new File([blob], 'clipboard.png', { type: blob.type || 'image/png' }))) } catch (err) { toast(T('Не удалось вставить изображение.', 'Could not paste the image.'), 'err') } return true }
+  const svg = [data.text, data.html].find(t => t && /<svg[\s>]/i.test(t));
+  if (svg) { try { importSVG(svg.slice(svg.search(/<svg[\s>]/i))) } catch (err) { toast(T('Не удалось вставить SVG.', 'Could not paste the SVG.'), 'err') } return true }
+  const m = data.html && /<img[^>]+src=["']([^"']+)["']/i.exec(data.html);
+  if (m && /^data:image\//i.test(m[1])) return pasteSystem({ image: m[1] }, at);
+  if (m) { toast(T('В буфере только ссылка на картинку. В браузере нажмите на картинке правой кнопкой → «Копировать изображение» и вставьте снова.', 'The clipboard only has a link to the picture. In the browser right-click the picture → “Copy image” and paste again.'), 'warn'); return true }
+  if (clip && clip.length) { pasteClip(at); return true }
+  return false;
+}
+async function readSystemClipboard() {
+  if (DESK && DESK.readClipboard) { try { return await DESK.readClipboard() } catch (e) { } }
+  const out = {};
+  try { for (const it of await navigator.clipboard.read()) { const img = it.types.find(t => /^image\//.test(t)); if (img && !out.file) out.file = new File([await it.getType(img)], 'clipboard', { type: img }); if (it.types.includes('text/html')) out.html = await (await it.getType('text/html')).text(); if (it.types.includes('text/plain')) out.text = await (await it.getType('text/plain')).text() } return out } catch (e) { }
+  try { out.text = await navigator.clipboard.readText() } catch (e) { }
+  return out;
+}
+async function pasteCommand(at) { const d = await readSystemClipboard(); if (!(await pasteSystem(d, at))) toast(T('В буфере обмена нет объектов, картинки или SVG.', 'The clipboard has no objects, picture or SVG.')) }
+function pasteClip(at) { if (!clip || !clip.length) return; pushUndo(T('Вставка', 'Paste')); let dx = 10, dy = -10; if (at) { const b = bboxOf(clip.flatMap(s => s.paths)); dx = at[0] - (b[0] + b[2]) / 2; dy = at[1] - (b[1] + b[3]) / 2 } sel = new Set(cloneShapes(clip, dx, dy)); clip = clip.map(s => ({ ...s, paths: mapPaths(s.paths, (x, y) => [x + 10, y - 10]) })); changed() }
 async function moveSelToSheet() {
   const opts = S.sheets.map((sh, i) => ({ label: sheetName(sh, i), value: i })).filter(o => o.value !== curPlate);
   const to = await confirmBox(T('Перенести на лист', 'Move to sheet'), T('Объекты сохранят положение относительно листа.', 'Objects keep their position relative to the sheet.'), opts.concat([{ label: T('Отмена', 'Cancel'), value: null }]));

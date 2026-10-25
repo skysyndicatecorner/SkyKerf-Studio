@@ -51,14 +51,7 @@ function processImage(s, pw, ph) {
   if (md === 'gray') { for (let i = 0; i < n; i++)out[i] = g[i]; return out }
   if (md === 'threshold') { const t = o.band ? 127 : 255 - (o.thr ?? 128); for (let i = 0; i < n; i++)out[i] = g[i] > t ? 255 : 0; return out }
   if (md === 'ordered') { const B = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]; for (let y = 0; y < ph; y++)for (let x2 = 0; x2 < pw; x2++) { const i = y * pw + x2; out[i] = g[i] > (B[(y & 3) * 4 + (x2 & 3)] + .5) * 16 ? 255 : 0 } return out }
-  const K = {
-    fs: [[1, 0, 7], [-1, 1, 3], [0, 1, 5], [1, 1, 1], 16], atkinson: [[1, 0, 1], [2, 0, 1], [-1, 1, 1], [0, 1, 1], [1, 1, 1], [0, 2, 1], 8],
-    jarvis: [[1, 0, 7], [2, 0, 5], [-2, 1, 3], [-1, 1, 5], [0, 1, 7], [1, 1, 5], [2, 1, 3], [-2, 2, 1], [-1, 2, 3], [0, 2, 5], [1, 2, 3], [2, 2, 1], 48],
-    stucki: [[1, 0, 8], [2, 0, 4], [-2, 1, 2], [-1, 1, 4], [0, 1, 8], [1, 1, 4], [2, 1, 2], [-2, 2, 1], [-1, 2, 2], [0, 2, 4], [1, 2, 2], [2, 2, 1], 42]
-  }[md] || [[1, 0, 7], [-1, 1, 3], [0, 1, 5], [1, 1, 1], 16];
-  const div = K[K.length - 1], ks = K.slice(0, -1);
-  for (let y = 0; y < ph; y++)for (let x2 = 0; x2 < pw; x2++) { const i = y * pw + x2, v = g[i], nv = v > 127 ? 255 : 0, e = v - nv; out[i] = nv; for (const [dx, dy, w] of ks) { const xx = x2 + dx, yy = y + dy; if (xx >= 0 && xx < pw && yy < ph) g[yy * pw + xx] += e * w / div } }
-  return out;
+  return ditherK(g, pw, ph, md in DITHER_K ? md : 'fs'); // Rust/WebAssembly kernel, JavaScript fallback (wasmcore.js)
 }
 /* Preview of a photo shape; "actual" renders at the real line interval (spec 6.3). */
 function imagePreview(s, actual) {
@@ -169,14 +162,22 @@ function importSVG(text) {
   const out = [], skipped = new Set();
   for (const el of svg.querySelectorAll('image,text,foreignObject')) skipped.add(el.nodeName.toLowerCase());
   try {
+    // hidden layers keep their geometry (shown as "hidden in the file" in the layer dialog)
+    const hid = [...svg.querySelectorAll('g,path,rect,circle,ellipse,line,polyline,polygon')].filter(e => !e.closest('defs,clipPath,mask,symbol,marker,pattern') && getComputedStyle(e).display === 'none');
+    for (const e of hid) { e.setAttribute('data-skh', '1'); e.style.display = 'inline' }
+    const INK = 'http://www.inkscape.org/namespaces/inkscape', topG = [...svg.children].filter(c => c.nodeName.toLowerCase() === 'g');
+    const layerOf = el => { for (let a = el.parentNode; a && a !== svg; a = a.parentNode) { if (!a.getAttribute) continue; if (a.getAttributeNS(INK, 'groupmode') === 'layer' || a.getAttribute('inkscape:groupmode') === 'layer') return a.getAttributeNS(INK, 'label') || a.getAttribute('inkscape:label') || a.id || '' } if (topG.length > 1) { let a = el; while (a.parentNode && a.parentNode !== svg) a = a.parentNode; if (a !== el && topG.includes(a)) return a.getAttribute('data-name') || a.id || '' } return '' };
+    const cssHex = c => { const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/.exec(c || ''); if (!m || m[4] === '0') return null; return '#' + [m[1], m[2], m[3]].map(v => (+v).toString(16).padStart(2, '0')).join('') };
+    const styleOf = (el, sc) => { const cs = getComputedStyle(el), op = +cs.opacity === 0; const stroke = !op && cs.stroke !== 'none' && +cs.strokeOpacity !== 0 ? cssHex(cs.stroke) : null, fill = !op && cs.fill !== 'none' && +cs.fillOpacity !== 0 ? cssHex(cs.fill) : null;
+      return { stroke, sw: stroke ? (parseFloat(cs.strokeWidth) || 0) * k * sc : 0, fill, name: layerOf(el), hidden: !!el.closest('[data-skh]') } };
     for (const el of svg.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon')) {
       if (el.closest('defs,clipPath,mask,symbol,marker,pattern')) continue;
-      const m = el.getCTM(), tf = (px, py) => m ? [(m.a * px + m.c * py + m.e) * k, (vh - (m.b * px + m.d * py + m.f)) * k] : [px * k, (vh - py) * k], stroke0 = () => (el.getAttribute('stroke') || getComputedStyle(el).stroke || '').toLowerCase();
-      let fast = null; try { const sc = m ? Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1 : 1; fast = svgElementPolys(el, .02 / (k * sc)) } catch (e) { fast = null }
+      const m = el.getCTM(), tf = (px, py) => m ? [(m.a * px + m.c * py + m.e) * k, (vh - (m.b * px + m.d * py + m.f)) * k] : [px * k, (vh - py) * k];
+      const sc = m ? Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1 : 1; let fast = null; try { fast = svgElementPolys(el, .02 / (k * sc)) } catch (e) { fast = null }
       if (fast && fast.length) {
         const clean = fast.map(p => { const pts = p.pts.map(q => tf(q[0], q[1])), f = pts[0], l = pts[pts.length - 1], cl = p.closed || (pts.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < .01); return { q: cl ? rdpClosed(p.closed && !(Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-9) ? pts : pts.slice(0, -1), .01) : rdp(pts, .01), cl } }).filter(c => c.q.length > 1);
-        if (!clean.length) continue; const stroke = stroke0();
-        if (clean.every(c => c.cl)) out.push({ paths: clean.map(c => c.q), closed: true, stroke }); else for (const c of clean) out.push({ paths: [c.q], closed: c.cl, stroke });
+        if (!clean.length) continue; const style = styleOf(el, sc);
+        if (clean.every(c => c.cl)) out.push({ paths: clean.map(c => c.q), closed: true, style }); else for (const c of clean) out.push({ paths: [c.q], closed: c.cl, style });
         continue;
       }
       let len = 0; try { len = el.getTotalLength() } catch (e) { } if (!len) continue; const step = Math.max(len / 6000, .2 / k), n = Math.ceil(len / step), pts = [];
@@ -184,26 +185,40 @@ function importSVG(text) {
       const paths = [[pts[0]]]; for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i]; if (Math.hypot(b[0] - a[0], b[1] - a[1]) > step * k * 4) paths.push([]); paths[paths.length - 1].push(b) }
       const tag = el.nodeName.toLowerCase(), forced = ['rect', 'circle', 'ellipse', 'polygon'].includes(tag);
       const clean = paths.filter(p => p.length > 1).map(p => { const cl = forced || Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) < step * k * 2.5; return { q: cl ? rdpClosed(p.slice(0, -1), .02) : rdp(p, .02), cl } });
-      if (!clean.length) continue; const stroke = (el.getAttribute('stroke') || getComputedStyle(el).stroke || '').toLowerCase();
-      if (clean.every(c => c.cl)) out.push({ paths: clean.map(c => c.q), closed: true, stroke }); else for (const c of clean) out.push({ paths: [c.q], closed: c.cl, stroke })
+      if (!clean.length) continue; const style = styleOf(el, sc);
+      if (clean.every(c => c.cl)) out.push({ paths: clean.map(c => c.q), closed: true, style }); else for (const c of clean) out.push({ paths: [c.q], closed: c.cl, style })
     }
   } finally { svg.remove() }
   if (!out.length) throw new Error(T('В SVG не найдено контуров.', 'No outlines found in the SVG.') + (skipped.size ? ' ' + T('Есть неподдерживаемые элементы: ', 'Unsupported elements present: ') + [...skipped].join(', ') : ''));
-  placeImported(out, 'svg', skipped.size ? T(`Пропущены неподдерживаемые элементы: ${[...skipped].join(', ')} (переведите текст в кривые перед экспортом из редактора).`, `Skipped unsupported elements: ${[...skipped].join(', ')} (convert text to paths before exporting).`) : null);
+  importStyled(out, 'svg', skipped.size ? T(`Пропущены неподдерживаемые элементы: ${[...skipped].join(', ')} (переведите текст в кривые перед экспортом из редактора).`, `Skipped unsupported elements: ${[...skipped].join(', ')} (convert text to paths before exporting).`) : null);
+}
+/* AutoCAD colour index → hex (1–9 exact, the rest approximated by the ACI hue wheel; 7 shown black on the light canvas) */
+function aciColor(i) {
+  const base = { 1: '#ff0000', 2: '#ffff00', 3: '#00ff00', 4: '#00ffff', 5: '#0000ff', 6: '#ff00ff', 7: '#000000', 8: '#808080', 9: '#c0c0c0' };
+  if (base[i]) return base[i]; if (i >= 250) { const g = Math.round(51 + (i - 250) * 40.8); return '#' + g.toString(16).padStart(2, '0').repeat(3) }
+  if (i < 10 || i > 249) return '#000000';
+  const h = Math.floor((i - 10) / 10) * 15, k = (i - 10) % 10, v = [1, 1, .8, .8, .6, .6, .5, .5, .3, .3][k], sa = k % 2 ? .5 : 1;
+  const f = n => { const q = (n + h / 60) % 6; return v - v * sa * Math.max(0, Math.min(q, 4 - q, 1)) };
+  return '#' + [f(5), f(3), f(1)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
 }
 function importDXF(text) {
   const Ls = text.split(/\r?\n/), pr = []; for (let i = 0; i + 1 < Ls.length; i += 2)pr.push([parseInt(Ls[i].trim(), 10), Ls[i + 1].trim()]);
   let scale = 1; for (let i = 0; i < pr.length - 1; i++)if (pr[i][0] === 9 && pr[i][1] === '$INSUNITS') { const u = +pr[i + 1][1]; scale = u === 1 ? 25.4 : u === 2 ? 304.8 : u === 5 ? 10 : u === 6 ? 1000 : 1 }
   let i = pr.findIndex((p, k) => p[0] === 2 && p[1] === 'ENTITIES' && pr[k - 1] && pr[k - 1][1] === 'SECTION'); if (i < 0) throw new Error(T('В DXF нет раздела ENTITIES.', 'The DXF has no ENTITIES section.'));
   const ents = []; let cur = null; for (i++; i < pr.length; i++) { const [c, v] = pr[i]; if (c === 0) { if (v === 'ENDSEC') break; cur = { type: v, d: [] }; ents.push(cur) } else if (cur) cur.d.push([c, v]) }
+  // layer table: name → colour, off (negative colour) or frozen (flag 1)
+  const LAY = new Map(); { const t = pr.findIndex((p, k) => p[0] === 2 && p[1] === 'LAYER' && pr[k - 1] && pr[k - 1][1] === 'TABLE'); if (t >= 0) { let L = null; for (let k = t + 1; k < pr.length; k++) { const [c, v] = pr[k]; if (c === 0) { if (v === 'ENDTAB') break; L = v === 'LAYER' ? { name: '', color: 7, flags: 0, tc: null } : null; continue } if (!L) continue; if (c === 2) { L.name = v; LAY.set(v, L) } else if (c === 62) L.color = +v; else if (c === 70) L.flags = +v; else if (c === 420) L.tc = +v } } }
+  const tcHex = n => '#' + (n & 0xffffff).toString(16).padStart(6, '0');
+  const styleOf = e => { let lay = '0', col = 256, tc = null; for (const [c, v] of e.d) { if (c === 8) lay = v; else if (c === 62) col = +v; else if (c === 420) tc = +v } const L = LAY.get(lay); if (tc == null && (col === 256 || col === 0)) { col = L ? L.color : 7; tc = L && L.tc != null ? L.tc : null } return { stroke: tc != null ? tcHex(tc) : aciColor(Math.abs(col)), sw: 0, fill: null, name: lay, hidden: !!L && (L.color < 0 || (L.flags & 1) === 1) } };
   const num = (e, c, def = 0) => { const p = e.d.find(q => q[0] === c); return p ? parseFloat(p[1]) : def };
   const arcP = (cx, cy, r, a0, a1) => { if (a1 <= a0) a1 += 360; return arcPts(cx, cy, r, a0 * Math.PI / 180, a1 * Math.PI / 180) };
   const bulge = (p1, p2, b) => { const th = 4 * Math.atan(b), c = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]); if (c < 1e-9 || Math.abs(b) < 1e-9) return []; const r = c / (2 * Math.sin(th / 2)), d = r * Math.cos(th / 2), ux = (p2[0] - p1[0]) / c, uy = (p2[1] - p1[1]) / c, cx = (p1[0] + p2[0]) / 2 - uy * d, cy = (p1[1] + p2[1]) / 2 + ux * d, a1 = Math.atan2(p1[1] - cy, p1[0] - cx), n = Math.max(4, Math.ceil(Math.abs(th * r) / .5)), o = []; for (let k = 1; k < n; k++) { const a = a1 + th * k / n; o.push([cx + Math.abs(r) * Math.cos(a), cy + Math.abs(r) * Math.sin(a)]) } return o };
-  const out = [], open = [], unsupported = new Set();
+  const out = [], openBy = new Map(), unsupported = new Set(); let st = null; const open = { push: p => { const k = JSON.stringify(st); if (!openBy.has(k)) openBy.set(k, { st, list: [] }); openBy.get(k).list.push(p) } };
   const vtxList = d => { const v = []; let last = null; for (const [c, val] of d) { if (c === 10) { last = [parseFloat(val), 0, 0]; v.push(last) } else if (c === 20 && last) last[1] = parseFloat(val); else if (c === 42 && last) last[2] = parseFloat(val) } return v };
   const polyFrom = (v, closed) => { const p = []; for (let k = 0; k < v.length; k++) { p.push([v[k][0], v[k][1]]); const nx = v[(k + 1) % v.length]; if (v[k][2] && (k < v.length - 1 || closed)) p.push(...bulge(v[k], nx, v[k][2])) } return p };
+  const outPush = out.push.bind(out); out.push = o => outPush(Object.assign(o, { style: st }));
   for (let k = 0; k < ents.length; k++) {
-    const e = ents[k];
+    const e = ents[k]; st = styleOf(e);
     if (e.type === 'LINE') open.push([[num(e, 10), num(e, 20)], [num(e, 11), num(e, 21)]]);
     else if (e.type === 'LWPOLYLINE') { const cl = (num(e, 70) & 1) === 1, p = polyFrom(vtxList(e.d), cl); if (p.length > 1) (cl ? out.push({ paths: [p], closed: true }) : open.push(p)) }
     else if (e.type === 'POLYLINE') { const cl = (num(e, 70) & 1) === 1, v = []; while (ents[k + 1] && ents[k + 1].type === 'VERTEX') { k++; v.push([num(ents[k], 10), num(ents[k], 20), num(ents[k], 42)]) } const p = polyFrom(v, cl); if (p.length > 1) (cl ? out.push({ paths: [p], closed: true }) : open.push(p)) }
@@ -217,10 +232,10 @@ function importDXF(text) {
     else if (e.type === 'SPLINE') { const fit = [], ctl = []; let lx = null; for (const [c, v] of e.d) { if (c === 11) { lx = [+v, 0]; fit.push(lx) } else if (c === 21 && lx) lx[1] = +v; else if (c === 10) { lx = [+v, 0]; ctl.push(lx) } else if (c === 20 && lx) lx[1] = +v } const p = fit.length > 1 ? fit : ctl; if (p.length > 1) { if ((num(e, 70) & 1) === 1) out.push({ paths: [p], closed: true }); else open.push(p) } }
     else if (!['VERTEX', 'SEQEND', 'POINT'].includes(e.type)) unsupported.add(e.type);
   }
-  for (const ch of joinOpenPaths(open, .01)) { if (ch.length > 2 && Math.hypot(ch[0][0] - ch[ch.length - 1][0], ch[0][1] - ch[ch.length - 1][1]) < .01) out.push({ paths: [ch.slice(0, -1)], closed: true }); else out.push({ paths: [ch], closed: false }) }
+  for (const { st: s2, list } of openBy.values()) { st = s2; for (const ch of joinOpenPaths(list, .01)) { if (ch.length > 2 && Math.hypot(ch[0][0] - ch[ch.length - 1][0], ch[0][1] - ch[ch.length - 1][1]) < .01) out.push({ paths: [ch.slice(0, -1)], closed: true }); else out.push({ paths: [ch], closed: false }) } }
   if (!out.length) throw new Error(T('В DXF не найдено поддерживаемых контуров.', 'No supported outlines found in the DXF.') + (unsupported.size ? ' ' + T('Есть объекты: ', 'Found: ') + [...unsupported].join(', ') : ''));
   for (const o of out) o.paths = mapPaths(o.paths, (x, y) => [x * scale, y * scale]);
-  placeImported(out, 'dxf', unsupported.size ? T(`Пропущены объекты DXF: ${[...unsupported].join(', ')}.`, `Skipped DXF entities: ${[...unsupported].join(', ')}.`) : null);
+  importStyled(out, 'dxf', unsupported.size ? T(`Пропущены объекты DXF: ${[...unsupported].join(', ')}.`, `Skipped DXF entities: ${[...unsupported].join(', ')}.`) : null);
 }
 /* multi-page vector results (CDR, PDF, PLT, LightBurn): pages side by side, outlines simplified */
 const IMPORT_WARN = () => ({ text: T('текст (переведите в кривые)', 'text (convert to curves)'), bitmap: T('растровые картинки', 'bitmaps'), image: T('растровые картинки', 'images'), effect: T('эффекты (тени, перетекания)', 'effects (shadows, blends)'), shading: T('градиенты', 'gradients'), damaged: T('повреждённые объекты', 'damaged objects'), objstm: T('часть объектов', 'some objects') });
@@ -234,7 +249,7 @@ function importPages(res, kind, opts = {}) {
         if (p.length < 2) continue; const f = p[0], l = p[p.length - 1], cl = s.closed || (p.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < .01);
         const q = cl ? rdpClosed(s.closed ? p : p.slice(0, -1), .01) : rdp(p, .01); if (q.length < 2) continue; (cl ? paths : open).push(q);
       }
-      if (paths.length) items.push({ paths, closed: true }); for (const q of open) items.push({ paths: [q], closed: false });
+      const style = s.style || null; if (paths.length) items.push({ paths, closed: true, style }); for (const q of open) items.push({ paths: [q], closed: false, style });
     }
     if (!items.length) continue;
     let b = null; for (const o of items) { const bb = bboxOf(o.paths); b = b ? unionBox(b, bb) : bb }
@@ -244,7 +259,7 @@ function importPages(res, kind, opts = {}) {
   const W = IMPORT_WARN(), skipped = [...new Set((res.warnings || []).map(w => W[w] || (/^(filter|cmd|shape):/.test(w) ? T('неподдерживаемые команды', 'unsupported commands') : null)).filter(Boolean))];
   if (!out.length) throw new Error(T('В файле не найдено контуров.', 'No outlines found in the file.') + (skipped.length ? ' ' + T('Пропущено: ', 'Skipped: ') + skipped.join(', ') + '.' : ''));
   const notes = []; if (n > 1) notes.push(T(`страниц: ${n}, разложены в ряд`, `${n} pages laid out in a row`)); if (skipped.length) notes.push(T('пропущено: ', 'skipped: ') + skipped.join(', ')); if (opts.unverified) notes.push(opts.unverified);
-  placeImported(out, kind, notes.join(' · ') || null);
+  importStyled(out, kind, notes.join(' · ') || null);
 }
 async function importMoreVector(f, name) {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1].toLowerCase(), buf = new Uint8Array(await f.arrayBuffer());
@@ -262,10 +277,10 @@ async function importMoreVector(f, name) {
   if (/^(plt|hpgl|hpg)$/.test(ext)) { importPages(parseHPGL(new TextDecoder('latin1').decode(buf)), 'plt', { unverified: T('импорт PLT не проверен на реальных файлах — сверьте масштаб (40 единиц = 1 мм)', 'PLT import not tested on real files — check the scale (40 units = 1 mm)') }); return }
   if (/^lbrn2?$/.test(ext)) { importPages(parseLBRN(new TextDecoder().decode(buf)), 'lbrn', { unverified: T('импорт LightBurn не проверен на реальных файлах — сверьте размеры', 'LightBurn import not tested on real files — check the dimensions') }); return }
 }
-function placeImported(out, kind, note, extra) {
+function placeImported(out, kind, note, extra, noUndo) {
   let b = null; for (const o of out) { const x = bboxOf(o.paths); b = b ? unionBox(b, x) : x }
   const sh = sheetAt(curPlate), dx = plateX(curPlate) + sh.x + 5 - b[0], dy = sh.y + 5 - b[1];
-  pushUndo(T('Импорт', 'Import')); const ids = new Set(), g = out.length > 1 || extra ? S.nextG++ : 0;
+  if (!noUndo) pushUndo(T('Импорт', 'Import')); const ids = new Set(), g = out.length > 1 || extra ? S.nextG++ : 0;
   if (g) S.groups[g] = Object.assign({ nm: kind.toUpperCase() }, extra || {});
   for (const o of out) { const s = addShape(S, o.layer ?? curDrawLayer, kind, mapPaths(o.paths, (x, y) => [x + dx, y + dy]), o.closed, g ? { g } : {}); ids.add(s.id) }
   sel = ids; changed();

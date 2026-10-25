@@ -116,12 +116,18 @@ async function parsePDF(bytes, inflate) {
   async function runContent(b, res, ctm0, shapes, depth) {
     if (depth > 12) return;
     const L = lexer(b), st = []; let ctm = ctm0.slice(), path = [], cur = null, start = null, ops = [];
+    // graphics state for colours: stroke/fill colour and line width (in mm after the CTM scale)
+    let gs = { sc: '#000000', fc: '#000000', lw: 1, scs: 1, fcs: 1 };
+    const hx = (r, g, b2) => '#' + [r, g, b2].map(v => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
+    const colOf = (v) => v.length >= 4 ? hx((1 - v[0]) * (1 - v[3]), (1 - v[1]) * (1 - v[3]), (1 - v[2]) * (1 - v[3])) : v.length === 3 ? hx(v[0], v[1], v[2]) : v.length ? hx(v[0], v[0], v[0]) : null;
+    const nums = a2 => a2.filter(x => typeof x === 'number');
     const T = (x, y) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]];
     const flushPath = (paint) => {
       if (paint && path.length) {
         const closed = [], open = [];
         for (const sp of path) { if (sp.pts.length < 2) continue; (sp.closed ? closed : open).push(sp.pts) }
-        if (closed.length) shapes.push({ paths: closed, closed: true }); for (const p of open) shapes.push({ paths: [p], closed: false });
+        const sc = Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2])) || 1, style = { stroke: paint.s ? gs.sc : null, sw: paint.s ? gs.lw * sc : 0, fill: paint.f ? gs.fc : null };
+        if (closed.length) shapes.push({ paths: closed, closed: true, style }); for (const p of open) shapes.push({ paths: [p], closed: false, style });
       }
       path = []; cur = null; start = null;
     };
@@ -133,8 +139,13 @@ async function parsePDF(bytes, inflate) {
       const o = tok.v, a = ops; ops = [];
       const n = i => typeof a[i] === 'number' ? a[i] : 0;
       switch (o) {
-        case 'q': st.push(ctm.slice()); break;
-        case 'Q': if (st.length) ctm = st.pop(); break;
+        case 'q': st.push([ctm.slice(), Object.assign({}, gs)]); break;
+        case 'Q': if (st.length) [ctm, gs] = st.pop(); break;
+        case 'w': gs.lw = n(0); break;
+        case 'RG': case 'K': case 'G': gs.sc = colOf(nums(a)) || gs.sc; break;
+        case 'rg': case 'k': case 'g': gs.fc = colOf(nums(a)) || gs.fc; break;
+        case 'SC': case 'SCN': { const v = nums(a); if (v.length) gs.sc = colOf(v) || gs.sc; break }
+        case 'sc': case 'scn': { const v = nums(a); if (v.length) gs.fc = colOf(v) || gs.fc; break }
         case 'cm': { const m2 = [n(0), n(1), n(2), n(3), n(4), n(5)]; ctm = [m2[0] * ctm[0] + m2[1] * ctm[2], m2[0] * ctm[1] + m2[1] * ctm[3], m2[2] * ctm[0] + m2[3] * ctm[2], m2[2] * ctm[1] + m2[3] * ctm[3], m2[4] * ctm[0] + m2[5] * ctm[2] + ctm[4], m2[4] * ctm[1] + m2[5] * ctm[3] + ctm[5]]; break }
         case 'm': cur = T(n(0), n(1)); start = cur; path.push({ pts: [cur], closed: false }); break;
         case 'l': if (!cur) { cur = T(n(0), n(1)); start = cur; path.push({ pts: [cur], closed: false }) } else { cur = T(n(0), n(1)); path[path.length - 1].pts.push(cur) } break;
@@ -143,8 +154,11 @@ async function parsePDF(bytes, inflate) {
         case 'y': if (cur) { const p3 = T(n(2), n(3)); bezTo(T(n(0), n(1)), p3, p3) } break;
         case 'h': if (path.length) { const sp = path[path.length - 1]; sp.closed = true; const f = sp.pts[0], l = sp.pts[sp.pts.length - 1]; if (sp.pts.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < 1e-6) sp.pts.pop(); cur = start } break;
         case 're': { const x = n(0), y = n(1), w = n(2), h = n(3); path.push({ pts: [T(x, y), T(x + w, y), T(x + w, y + h), T(x, y + h)], closed: true }); cur = T(x, y); start = cur; break }
-        case 'S': case 'f': case 'F': case 'f*': case 'B': case 'B*': flushPath(true); break;
-        case 's': case 'b': case 'b*': if (path.length) path[path.length - 1].closed = true; flushPath(true); break;
+        case 'S': flushPath({ s: 1 }); break;
+        case 'f': case 'F': case 'f*': flushPath({ f: 1 }); break;
+        case 'B': case 'B*': flushPath({ s: 1, f: 1 }); break;
+        case 's': if (path.length) path[path.length - 1].closed = true; flushPath({ s: 1 }); break;
+        case 'b': case 'b*': if (path.length) path[path.length - 1].closed = true; flushPath({ s: 1, f: 1 }); break;
         case 'n': flushPath(false); break;
         case 'BT': warn.add('text'); break;
         case 'BI': { // inline image: skip to EI
@@ -181,8 +195,9 @@ async function parsePDF(bytes, inflate) {
 
 /* ---------------- HPGL / PLT ---------------- */
 function parseHPGL(text) {
-  const shapes = [], warn = new Set(); let x = 0, y = 0, down = false, rel = false, cur = null, scale = 1 / 40; // 40 plotter units per mm
-  const flush = () => { if (cur && cur.length > 1) { const f = cur[0], l = cur[cur.length - 1], cl = cur.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < .01; shapes.push({ paths: [cl ? cur.slice(0, -1) : cur], closed: cl }) } cur = null };
+  const shapes = [], warn = new Set(); let x = 0, y = 0, down = false, rel = false, cur = null, scale = 1 / 40, pen = 1; // 40 plotter units per mm
+  const PEN = ['#000000', '#000000', '#ff0000', '#00a000', '#d0d000', '#0000ff', '#ff00ff', '#00c0c0', '#ff8000'], style = () => ({ stroke: PEN[pen] || '#808080', sw: 0, fill: null, name: 'Pen ' + pen });
+  const flush = () => { if (cur && cur.length > 1) { const f = cur[0], l = cur[cur.length - 1], cl = cur.length > 2 && Math.hypot(f[0] - l[0], f[1] - l[1]) < .01; shapes.push({ paths: [cl ? cur.slice(0, -1) : cur], closed: cl, style: style() }) } cur = null };
   const cmds = text.replace(/\x1b[^A-Za-z]*[A-Za-z]/g, '').split(/;|\n|\r/).map(s => s.trim()).filter(Boolean);
   for (const c of cmds) {
     let i = 0; while (i < c.length) {
@@ -195,9 +210,10 @@ function parseHPGL(text) {
         case 'PD': down = true; move(null); break;
         case 'PA': rel = false; move(null); break;
         case 'PR': rel = true; move(null); break;
-        case 'CI': { const r = (args[0] || 0) * scale, pts = []; for (let k = 0; k < 72; k++) { const a = k / 72 * Math.PI * 2; pts.push([x * scale + r * Math.cos(a), y * scale + r * Math.sin(a)]) } shapes.push({ paths: [pts], closed: true }); break }
+        case 'CI': { const r = (args[0] || 0) * scale, pts = []; for (let k = 0; k < 72; k++) { const a = k / 72 * Math.PI * 2; pts.push([x * scale + r * Math.cos(a), y * scale + r * Math.sin(a)]) } shapes.push({ paths: [pts], closed: true, style: style() }); break }
         case 'AA': case 'AR': { const cx = op === 'AR' ? x + args[0] : args[0], cy = op === 'AR' ? y + args[1] : args[1], sw = (args[2] || 0) * Math.PI / 180, r = Math.hypot(x - cx, y - cy), a0 = Math.atan2(y - cy, x - cx), n = Math.max(4, Math.ceil(Math.abs(sw) * r * scale / .5)); if (down && !cur) cur = [[x * scale, y * scale]]; for (let k = 1; k <= n; k++) { const a = a0 + sw * k / n; x = cx + r * Math.cos(a); y = cy + r * Math.sin(a); if (down) cur.push([x * scale, y * scale]) } break }
-        case 'SP': case 'VS': case 'LT': case 'SC': case 'IP': case 'PW': case 'WU': case 'SI': case 'DT': case 'FS': case 'PG': case 'RO': case 'NP': case 'PS': case 'IW': case 'BP': case 'PM': case 'FP': case 'EP': case 'CT': break;
+        case 'SP': flush(); pen = args.length ? args[0] | 0 : 0; break;
+        case 'VS': case 'LT': case 'SC': case 'IP': case 'PW': case 'WU': case 'SI': case 'DT': case 'FS': case 'PG': case 'RO': case 'NP': case 'PS': case 'IW': case 'BP': case 'PM': case 'FP': case 'EP': case 'CT': break;
         case 'LB': warn.add('text'); i = c.length; break;
         default: if (/^[A-Z]{2}$/.test(op)) warn.add('cmd:' + op);
       }
@@ -215,8 +231,18 @@ function parseLBRN(text, DOMParserImpl) {
   const xf = el => { const x = [...el.children].find(c => c.nodeName === 'XForm'); if (!x) return [1, 0, 0, 1, 0, 0]; const v = x.textContent.trim().split(/\s+/).map(Number); return v.length === 6 && v.every(isFinite) ? v : [1, 0, 0, 1, 0, 0] };
   const ap = (M, p) => [M[0] * p[0] + M[2] * p[1] + M[4], M[1] * p[0] + M[3] * p[1] + M[5]];
   const num = (el, k, d = 0) => { const v = parseFloat(el.getAttribute(k)); return isFinite(v) ? v : d };
+  /* layers (CutSetting): index → name, type (Cut / Scan / Image / Scan+Cut / Offset Fill), power, speed (mm/s), passes, interval */
+  const LB_COL = ['#000000', '#0000ff', '#ff0000', '#00e000', '#d0d000', '#ff8000', '#00e0e0', '#ff00ff', '#b4b4b4', '#0000a0', '#a00000', '#00a000', '#a0a000', '#c08000', '#00a0ff', '#a000a0', '#808080', '#7d87b9', '#bb7784', '#4a6fe3', '#d33f6a', '#8cd78c', '#f0b98d', '#f6c4e1', '#fa9ed4', '#500a78', '#b45a00', '#004754', '#86fa88', '#ffdb66'];
+  const val = (el, k) => { const c = [...el.children].find(x => x.nodeName === k); return c ? c.getAttribute('Value') : null };
+  const CUTS = new Map();
+  for (const cs of root.children) {
+    if (cs.nodeName !== 'CutSetting' && cs.nodeName !== 'CutSetting_Img') continue;
+    const idx = +(val(cs, 'index') ?? 0), f = k => { const v = parseFloat(val(cs, k)); return isFinite(v) ? v : null };
+    CUTS.set(idx, { index: idx, name: val(cs, 'name') || ('C' + String(idx).padStart(2, '0')), kind: cs.getAttribute('type') || (cs.nodeName === 'CutSetting_Img' ? 'Image' : 'Cut'), power: f('maxPower'), minPower: f('minPower'), speed: f('speed'), passes: f('numPasses'), interval: f('interval'), hide: val(cs, 'hide') === '1', output: val(cs, 'doOutput') !== '0' });
+  }
+  const styleOf = el => { const i = +(el.getAttribute('CutIndex') || 0), cs = CUTS.get(i); return { stroke: LB_COL[i % 30], sw: 0, fill: null, name: cs ? cs.name : 'C' + String(i).padStart(2, '0'), lb: cs || { index: i, kind: 'Cut' } } };
   const cubic = (p0, p1, p2, p3, out) => { const n = Math.max(4, Math.min(48, Math.ceil((Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) + Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) + Math.hypot(p3[0] - p2[0], p3[1] - p2[1])) / .4))); for (let i = 1; i <= n; i++) { const s = i / n, u = 1 - s; out.push([u * u * u * p0[0] + 3 * u * u * s * p1[0] + 3 * u * s * s * p2[0] + s * s * s * p3[0], u * u * u * p0[1] + 3 * u * u * s * p1[1] + 3 * u * s * s * p2[1] + s * s * s * p3[1]]) } };
-  function pathShape(el, M) {
+  function pathShape(el, M, st) {
     const vl = [...el.children].find(c => c.nodeName === 'VertList'), pl = [...el.children].find(c => c.nodeName === 'PrimList');
     if (!vl) return;
     const V = [];
@@ -235,17 +261,17 @@ function parseLBRN(text, DOMParserImpl) {
     }
     const closed = [], open = [];
     for (const s of subs) { if (s.last === s.first && s.pts.length > 2) { s.pts.pop(); closed.push(s.pts) } else if (s.pts.length > 1) open.push(s.pts) }
-    if (closed.length) shapes.push({ paths: closed, closed: true }); for (const p of open) shapes.push({ paths: [p], closed: false });
+    if (closed.length) shapes.push({ paths: closed, closed: true, style: st }); for (const p of open) shapes.push({ paths: [p], closed: false, style: st });
   }
   function walk(el, M) {
     for (const c of el.children) {
       if (c.nodeName !== 'Shape') continue;
-      const T = c.getAttribute('Type'), N = mul(M, xf(c));
+      const T = c.getAttribute('Type'), N = mul(M, xf(c)), st = styleOf(c);
       if (T === 'Group') { const ch = [...c.children].find(x => x.nodeName === 'Children'); if (ch) walk(ch, N) }
-      else if (T === 'Rect') { const w = num(c, 'W'), h = num(c, 'H'), r = Math.min(num(c, 'Cr'), w / 2, h / 2), pts = []; if (r > 0) { for (const [cx, cy, a0] of [[w / 2 - r, -h / 2 + r, -Math.PI / 2], [w / 2 - r, h / 2 - r, 0], [-w / 2 + r, h / 2 - r, Math.PI / 2], [-w / 2 + r, -h / 2 + r, Math.PI]]) for (let i = 0; i <= 8; i++) { const a = a0 + i / 8 * Math.PI / 2; pts.push(ap(N, [cx + r * Math.cos(a), cy + r * Math.sin(a)])) } } else for (const p of [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]) pts.push(ap(N, p)); shapes.push({ paths: [pts], closed: true }) }
-      else if (T === 'Ellipse') { const rx = num(c, 'Rx'), ry = num(c, 'Ry'), n = Math.max(32, Math.ceil((rx + ry) * 2)), pts = []; for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; pts.push(ap(N, [rx * Math.cos(a), ry * Math.sin(a)])) } shapes.push({ paths: [pts], closed: true }) }
-      else if (T === 'Path' || T === 'Polygon' || T === 'Polyline') pathShape(c, N);
-      else if (T === 'Text') { const bp = [...c.children].find(x => x.nodeName === 'BackupPath'); if (bp) pathShape(bp, mul(N, xf(bp))); else warn.add('text') }
+      else if (T === 'Rect') { const w = num(c, 'W'), h = num(c, 'H'), r = Math.min(num(c, 'Cr'), w / 2, h / 2), pts = []; if (r > 0) { for (const [cx, cy, a0] of [[w / 2 - r, -h / 2 + r, -Math.PI / 2], [w / 2 - r, h / 2 - r, 0], [-w / 2 + r, h / 2 - r, Math.PI / 2], [-w / 2 + r, -h / 2 + r, Math.PI]]) for (let i = 0; i <= 8; i++) { const a = a0 + i / 8 * Math.PI / 2; pts.push(ap(N, [cx + r * Math.cos(a), cy + r * Math.sin(a)])) } } else for (const p of [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]) pts.push(ap(N, p)); shapes.push({ paths: [pts], closed: true, style: st }) }
+      else if (T === 'Ellipse') { const rx = num(c, 'Rx'), ry = num(c, 'Ry'), n = Math.max(32, Math.ceil((rx + ry) * 2)), pts = []; for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; pts.push(ap(N, [rx * Math.cos(a), ry * Math.sin(a)])) } shapes.push({ paths: [pts], closed: true, style: st }) }
+      else if (T === 'Path' || T === 'Polygon' || T === 'Polyline') pathShape(c, N, st);
+      else if (T === 'Text') { const bp = [...c.children].find(x => x.nodeName === 'BackupPath'); if (bp) pathShape(bp, mul(N, xf(bp)), st); else warn.add('text') }
       else if (T === 'Bitmap') warn.add('image');
       else warn.add('shape:' + T);
     }

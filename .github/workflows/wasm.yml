@@ -1,0 +1,28 @@
+name: WebAssembly kernels
+
+# Rebuilds wasm/src/lib.rs from source and runs the kernel tests against the
+# fresh module, so the embedded src/js/wasm-bin.js can always be reproduced.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['wasm/**', 'src/js/wasmcore.js', 'tests/wasm.test.js']
+  pull_request:
+    paths: ['wasm/**', 'src/js/wasmcore.js', 'tests/wasm.test.js']
+
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Rust target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build and embed
+        run: sh wasm/build.sh
+      - name: Kernel tests (fresh module)
+        run: node --test tests/wasm.test.js

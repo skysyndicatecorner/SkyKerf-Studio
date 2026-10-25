@@ -326,12 +326,21 @@ let GS = null;
 function openGen(kind, preset, edit) {
   const g = GENS[kind]; if (!g) return; if (g.laserOnly && !LT()) { needMachine('laser', g.name()); return } if (g.cncOnly && LT()) { needMachine('cnc', g.name()); return }
   const o = {}; for (const f of g.fields) if (f.def) o[f.k] = f.def(); if (g.presets) Object.assign(o, g.presets[(preset && preset.style) || o.style] || {}); Object.assign(o, preset || {}); if (g.migrate) g.migrate(o);
-  GS = { kind, g, o, res: null, view: '2d', viewer: null, err: null, edit: edit || null };
+  GS = { kind, g, o, res: null, view: g.editor ? 'plan' : '2d', viewer: null, err: null, edit: edit || null };
   openModal(`${ic(g.icon, 18)} ${g.name()}${edit ? ` <span class="pill mut">${T('изменение', 'editing')}</span>` : ''}`, `<div class="ws-view" id="genView"><canvas id="genCv"></canvas><canvas id="gen3d" hidden></canvas>
    <div class="float" id="genVb"></div><div class="badge" id="genInfo">…</div></div><div class="ws-side" id="genSide"></div>`,
     `<p class="note" id="genNote"></p><button class="btn" data-act="closeModal">${T('Отмена', 'Cancel')}</button><button class="primary" data-act="genPlace">${ic('nest', 15)} ${edit ? T('Заменить и разложить…', 'Replace and nest…') : T('Добавить и разложить…', 'Add and nest…')}</button>`, 'xl');
   onModalClose = () => { if (GS && GS.viewer) GS.viewer.dispose(); GS = null };
-  renderGenSide(); genRegen();
+  renderGenSide(); genRegen(); bindGen2d();
+}
+/* 2D preview: wheel — zoom at the cursor, drag — move, double click — fit */
+function bindGen2d() {
+  const c = $('#genCv'); if (!c) return; let dr = null;
+  c.addEventListener('wheel', e => { if (!GS) return; e.preventDefault(); const v = GS.v2 || (GS.v2 = { k: 1, dx: 0, dy: 0 }), r = c.getBoundingClientRect(), px = e.clientX - r.left - r.width / 2, py = e.clientY - r.top - r.height / 2, k2 = clamp(v.k * Math.exp(-e.deltaY * .0015), .2, 40); v.dx = px - (px - v.dx) * k2 / v.k; v.dy = py - (py - v.dy) * k2 / v.k; v.k = k2; genDraw() }, { passive: false });
+  c.addEventListener('pointerdown', e => { if (!GS) return; if (GS.g.editor && GS.view === 'plan' && GS.g.editor.down(e)) { dr = { ed: true }; c.setPointerCapture(e.pointerId); return } const v = GS.v2 || (GS.v2 = { k: 1, dx: 0, dy: 0 }); dr = { x: e.clientX, y: e.clientY, dx: v.dx, dy: v.dy, moved: 0 }; c.setPointerCapture(e.pointerId) });
+  c.addEventListener('pointermove', e => { if (!GS) return; if (dr && dr.ed) { GS.g.editor.move(e); return } if (!dr) { if (GS.g.editor && GS.view === 'plan' && GS.g.editor.hover) GS.g.editor.hover(e); return } dr.moved = Math.max(dr.moved, Math.hypot(e.clientX - dr.x, e.clientY - dr.y)); GS.v2.dx = dr.dx + e.clientX - dr.x; GS.v2.dy = dr.dy + e.clientY - dr.y; genDraw() });
+  c.addEventListener('pointerup', e => { if (dr && dr.ed && GS) { GS.g.editor.up(e); dr = null; return } if (dr && GS && dr.moved < 4) { GS.v2.dx = dr.dx; GS.v2.dy = dr.dy; if (GS.jmode && GS.view === '2d') mjClick(e); else if (GS.g.editor && GS.view === 'plan' && GS.g.editor.click) GS.g.editor.click(e) } dr = null });
+  c.addEventListener('dblclick', () => { if (GS) { GS.v2 = { k: 1, dx: 0, dy: 0 }; genDraw() } });
 }
 function genField(f, o) {
   if (f.show && !f.show(o)) return ''; const cls = f.pro ? 'pro' : '', lbl = f.l();
@@ -346,35 +355,40 @@ function genField(f, o) {
 }
 function renderGenSide() {
   if (!GS) return; const { g, o } = GS, sh = sheetAt(curPlate);
-  $('#genSide').innerHTML = `<div class="sec"><h3>${T('Параметры', 'Parameters')}</h3>${g.fields.map(f => genField(f, o)).join('')}</div><div class="sec"><h3>${T('Результат', 'Result')}</h3><div id="genRes" class="bom"></div></div>
+  $('#genSide').innerHTML = `${typeof testTabs === 'function' ? testTabs(GS.kind) : ''}${typeof houseTabs === 'function' ? houseTabs(GS.kind) : ''}${g.sidePre ? g.sidePre(o) : ''}<div class="sec"><h3>${T('Параметры', 'Parameters')}</h3>${g.fields.map(f => genField(f, o)).join('')}</div><div class="mjwrap">${typeof mjSideHtml === 'function' ? mjSideHtml() : ''}</div><div class="sec"><h3>${T('Результат', 'Result')}</h3><div id="genRes" class="bom"></div></div>
   <div class="sec"><h3>${T('Материал', 'Material')}</h3><p class="note">${esc(matLabel(matById(sh.mat), sh.thick))} · ${T('лист', 'sheet')} ${fx(sh.w, 0)}×${fx(sh.h, 0)} ${MM()}</p></div>`;
   renderGenVb();
 }
-function renderGenVb() { if (!GS) return; const has3d = GS.res && GS.res.asm && typeof THREE !== 'undefined'; $('#genVb').innerHTML = `<div class="seg"><button data-act="genView" data-v="2d" aria-pressed="${GS.view === '2d'}">${GS.kind === 'layered' ? T('Карта глубины', 'Depth map') : T('Детали', 'Parts')}</button>${has3d ? `<button data-act="genView" data-v="3d" aria-pressed="${GS.view === '3d'}">${T('3D-сборка', '3D assembly')}</button>` : ''}</div>` }
+function renderGenVb() { if (!GS) return; const has3d = GS.res && GS.res.asm && typeof THREE !== 'undefined'; $('#genVb').innerHTML = `<div class="seg">${GS.g.editor ? `<button data-act="genView" data-v="plan" aria-pressed="${GS.view === 'plan'}">${T('План', 'Plan')}</button>` : ''}<button data-act="genView" data-v="2d" aria-pressed="${GS.view === '2d'}">${GS.kind === 'layered' ? T('Карта глубины', 'Depth map') : T('Детали', 'Parts')}</button>${has3d ? `<button data-act="genView" data-v="3d" aria-pressed="${GS.view === '3d'}">${T('3D-сборка', '3D assembly')}</button>` : ''}</div>${GS.view !== '3d' ? `<span class="sep"></span><button class="icon-btn" data-act="gen2z" data-v="-1" title="${T('Отдалить', 'Zoom out')}">${ic('zout')}</button><button class="icon-btn" data-act="gen2z" data-v="1" title="${T('Приблизить', 'Zoom in')}">${ic('zin')}</button><button class="icon-btn" data-act="gen2z" data-v="0" title="${T('Показать всё', 'Fit')}">${ic('fit')}</button>` : ''}` }
 let genT = 0;
 function genRegen() {
   clearTimeout(genT); genT = setTimeout(async () => {
-    if (!GS) return; const my = GS; try { busy(T('Строю…', 'Building…')); const r = await my.g.make(my.o); if (GS !== my) return; my.res = r; my.err = null } catch (e) { logError('gen', e); my.res = null; my.err = e.message || String(e) } finally { busy(null) }
+    if (!GS) return; const my = GS; try { busy(T('Строю…', 'Building…')); const r = await my.g.make(my.o); if (GS !== my) return; my.raw = r; if (my.g.manualJoints && (my.o.mj || []).length) { const r2 = cloneRes(r); my.mjWarn = applyManualJoints(r2, my.o); my.res = r2 } else { my.res = r; my.mjWarn = [] } my.err = null } catch (e) { logError('gen', e); my.res = null; my.err = e.message || String(e) } finally { busy(null) }
     if (GS !== my) return; const info = $('#genInfo'); info.textContent = my.err ? '⚠ ' + my.err : my.res.info;
-    $('#genRes').innerHTML = my.res ? [`<b>${T('Деталей', 'Parts')}: ${my.res.parts.length}</b>`, ...(my.res.steps || []).map((s, i) => `${i + 1}. ${esc(s)}`), ...(my.res.bom || []).map(esc)].map(x => `<div>${x}</div>`).join('') : '';
+    $('#genRes').innerHTML = my.res ? [`<b>${T('Деталей', 'Parts')}: ${my.res.parts.length}</b>`, ...(my.res.steps || []).map((s, i) => `${i + 1}. ${esc(s)}`), ...(my.res.bom || []).map(esc), ...(my.mjWarn || []).map(w => `<span class="warnline">${esc(w)}</span>`)].map(x => `<div>${x}</div>`).join('') : '';
+    if (my.g.manualJoints && $('#genSide')) { const box = $('#genSide').querySelector('.mjwrap'); if (box) box.outerHTML = `<div class="mjwrap">${mjSideHtml()}</div>` }
     $('#genNote').textContent = T('Дальше откроется раскладка: один лист, несколько листов или только текущий.', 'Nesting opens next: one sheet, several sheets or the current one.');
     renderGenVb(); genDraw()
   }, 180)
 }
 function genDraw() {
-  if (!GS) return; const c2 = $('#genCv'), c3 = $('#gen3d'); const v3 = GS.view === '3d' && GS.res && GS.res.asm; c2.hidden = !!v3; c3.hidden = !v3;
+  if (!GS) return; const c2 = $('#genCv'), c3 = $('#gen3d'); const v3 = GS.view === '3d' && GS.res && GS.res.asm; c2.hidden = !!v3; c3.hidden = !v3; if (GS.viewer) GS.viewer.showPad(!!v3);
   if (v3) { if (!GS.viewer) GS.viewer = createViewer(c3); if (GS.viewer) { GS.viewer.setPlates(GS.res.asm); GS.viewer.show(false, true); GS.viewer.fitPlates() } return }
   const r = c2.getBoundingClientRect(), d = window.devicePixelRatio || 1; if (!r.width) return; c2.width = Math.round(r.width * d); c2.height = Math.round(r.height * d); const c = c2.getContext('2d'); c.setTransform(d, 0, 0, d, 0, 0); c.clearRect(0, 0, r.width, r.height);
+  const vz = GS.v2 || (GS.v2 = { k: 1, dx: 0, dy: 0 }); c.translate(r.width / 2 + vz.dx, r.height / 2 + vz.dy); c.scale(vz.k, vz.k); c.translate(-r.width / 2, -r.height / 2);
+  if (GS.g.editor && GS.view === 'plan') { GS.g.editor.draw(c, r.width, r.height, vz); return }
   if (!GS.res) return; if (GS.g.preview) { GS.g.preview(c, r.width, r.height, GS.res); return }
   const parts = GS.res.parts, gap = 6, boxes = parts.map(p => bboxOf(p.items.flatMap(i => i.paths))); let tot = 0; boxes.forEach(b => tot += (b[2] - b[0] + gap) * (b[3] - b[1] + gap)); const target = Math.sqrt(tot) * 1.4;
   let x = 0, y = 0, rh = 0, pos = [], mw = 0; boxes.forEach(b => { const w = b[2] - b[0], h = b[3] - b[1]; if (x > 0 && x + w > target) { x = 0; y += rh + gap; rh = 0 } pos.push([x - b[0], y - b[1]]); x += w + gap; rh = Math.max(rh, h); mw = Math.max(mw, x) }); const th = y + rh;
   const s = Math.min((r.width - 48) / mw, (r.height - 80) / th), ox = (r.width - mw * s) / 2, oy = (r.height - th * s) / 2 + th * s;
+  GS.layout = { pos, s, ox, oy, boxes };
   parts.forEach((p, i) => {
     for (const it of p.items) {
       const L = S.layers[it.layer]; c.beginPath(); for (const q of it.paths) { q.forEach((pt, k) => { const X = ox + (pt[0] + pos[i][0]) * s, Y = oy - (pt[1] + pos[i][1]) * s; k ? c.lineTo(X, Y) : c.moveTo(X, Y) }); if (it.closed) c.closePath() }
-      if (it.closed && it.layer === CUT) { c.fillStyle = css('--sheet'); c.fill('evenodd') } if (it.closed && L.type === 'fill') { c.fillStyle = hexA(L.color, .35); c.fill('evenodd') } c.strokeStyle = L.color; c.lineWidth = 1.1; c.stroke()
+      if (it.closed && it.layer === CUT) { c.fillStyle = css('--sheet'); c.fill('evenodd') } if (it.closed && L.type === 'fill') { c.fillStyle = hexA(L.color, .35); c.fill('evenodd') } c.strokeStyle = L.color; c.lineWidth = 1.1 / vz.k; c.stroke()
     }
   });
+  if (GS.g.manualJoints && typeof mjDrawOverlay === 'function') mjDrawOverlay(c, GS.layout, vz);
 }
 function genPlace() {
   if (!GS || !GS.res) { toast(T('Сначала исправьте параметры.', 'Fix the parameters first.')); return }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>SkyKerf_Studio</title>
 <link rel="stylesheet" href="fonts/fonts.css">
 <link rel="stylesheet" href="app.css">
@@ -64,6 +64,8 @@
 
 <script src="js/core.js"></script>
 <script src="js/geom.js"></script>
+<script src="js/wasm-bin.js"></script>
+<script src="js/wasmcore.js"></script>
 <script src="js/materials.js"></script>
 <script src="js/fontname.js"></script>
 <script src="js/text.js"></script>
@@ -73,14 +75,27 @@
 <script src="js/cdr.js"></script>
 <script src="js/vecformats.js"></script>
 <script src="js/imports.js"></script>
+<script src="js/impmap.js"></script>
+<script src="js/gcconv.js"></script>
 <script src="js/cad.js"></script>
 <script src="js/decor.js"></script>
 <script src="js/gen.js"></script>
 <script src="js/houses.js"></script>
+<script src="js/houses2.js"></script>
+<script src="js/houses3.js"></script>
+<script src="js/furniture.js"></script>
+<script src="js/housekit.js"></script>
+<script src="js/boxes.js"></script>
+<script src="js/figures.js"></script>
+<script src="js/awards.js"></script>
+<script src="js/toys.js"></script>
 <script src="js/decorgen.js"></script>
+<script src="js/layered.js"></script>
+<script src="js/tests.js"></script>
 <script src="js/slicer.js"></script>
 <script src="js/relief.js"></script>
 <script src="js/devices.js"></script>
+<script src="js/gamepad.js"></script>
 <script src="js/help.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/dialogs.js"></script>

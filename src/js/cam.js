@@ -11,7 +11,8 @@ const CNC_AUTO_ORDER = { drill: 0, engrave: 1, vcarve: 2, chamfer: 3, pocket: 4,
 function orderedLayers(plate) {
   const ls = usedLayers(plate).filter(L => layerOut(L));
   if (S.orderMode !== 'auto') return ls;
-  const key = L => isLaser() ? (S.job.engraveFirst ? LASER_AUTO_ORDER[L.type] ?? 9 : 0) : CNC_AUTO_ORDER[L.cnc.op] ?? 9;
+  // combined machine: all laser work first (one head change), then the router
+  const key = L => layerHead(L) === 'laser' ? (S.job.engraveFirst || S.machine.combo ? LASER_AUTO_ORDER[L.type] ?? 9 : 0) : (CNC_AUTO_ORDER[L.cnc.op] ?? 9) + (S.machine.combo ? 100 : 0);
   return ls.slice().sort((a, b) => key(a) - key(b) || S.order.indexOf(a.id) - S.order.indexOf(b.id));
 }
 function hatch(paths, step, angDeg) {
@@ -63,14 +64,29 @@ function kerfPaths(paths, kerf, side) {
 }
 
 /* ============================ job planning ============================ */
-function planJob(plate) {
-  const m = S.machine, laser = m.type === 'laser', sheet = sheetAt(plate), OX = plateX(plate), warn = [], ops = [];
+/* which head a layer uses: the machine type, or the layer's own choice on a combined laser + router machine */
+const layerHead = (L, m) => (m || S.machine).combo && (L.head === 'laser' || L.head === 'cnc') ? L.head : (m || S.machine).type;
+/* Z behaviour of router layers */
+const CNC_Z_DEF = { zMode: 'std', entry: 'plunge', rampAng: 5, retract: 'safe', clearH: 1, lift: 'none', liftEvery: 50, spring: false, coolant: 'none', spinWait: 0 };
+const Z_PRESETS = {
+  std: { entry: 'plunge', retract: 'safe', lift: 'none', spring: false, coolant: 'none', spinWait: 0 },
+  acrylic: { entry: 'ramp', rampAng: 3, retract: 'low', clearH: 1, lift: 'pass', spring: true, coolant: 'M8', spinWait: 2 },
+  deep: { entry: 'ramp', rampAng: 5, retract: 'safe', lift: 'dist', liftEvery: 40, spring: false, coolant: 'none', spinWait: 1 },
+  soft: { entry: 'ramp', rampAng: 10, retract: 'low', clearH: 2, lift: 'none', spring: false, coolant: 'none', spinWait: 0 },
+  custom: {},
+};
+const Z_MODES = () => [['std', T('Обычный (врезание сверху)', 'Standard (straight plunge)')], ['acrylic', T('Оргстекло / акрил (без плавления)', 'Acrylic (no melting)')], ['deep', T('Глубокий рез (подъёмы для стружки)', 'Deep cut (chip-clearing lifts)')], ['soft', T('Мягкий материал (быстро)', 'Soft material (fast)')], ['custom', T('Свои настройки', 'Custom')]];
+function planJob(plate, opts) {
+  opts = opts || {};
+  const m = S.machine, sheet = sheetAt(plate), OX = plateX(plate), warn = [], ops = [];
   const shapes = S.shapes.filter(s => !s.parked && plateOf(s) === plate).map(s => Object.assign({}, s, { paths: mapPaths(s.paths, (x, y) => [x - OX, y]) }));
   let cx = 0, cy = 0;
   for (const L of orderedLayers(plate)) {
     if (!L.on) continue;
+    if (opts.only && !opts.only.includes(L.type)) continue;
     const ls = shapes.filter(s => s.layer === L.id); if (!ls.length) continue;
     const mv = [], add = o => { mv.push(o); if (o.x != null) cx = o.x; if (o.y != null) cy = o.y };
+    const laser = layerHead(L, m) === 'laser';
     if (laser) {
       const r = resolveLaser(L, sheet, m), l = L.laser;
       for (const w of r.warn) warn.push(`${layerName(L)}: ${w}`);
@@ -108,18 +124,41 @@ function planJob(plate) {
           }
         }
       }
-      ops.push({ layer: L.id, name: layerName(L), type: L.type, color: L.color, params: r, air: !!l.air, focus: m.hasZ ? (l.focus || 0) : 0, moves: mv });
+      if (m.combo && m.laserOff && (m.laserOff[0] || m.laserOff[1])) for (const o of mv) { if (o.x != null) o.x -= m.laserOff[0]; if (o.y != null) o.y -= m.laserOff[1] } // laser module offset from the spindle
+      ops.push({ head: 'laser', layer: L.id, name: layerName(L), type: L.type, color: L.color, params: r, air: !!l.air, focus: m.hasZ ? (l.focus || 0) : 0, moves: mv });
     } else {
       const c = resolveCnc(L, sheet), tool = c.tool, r = Math.max(.01, tool.d) / 2, safe = m.safeZ, levels = [];
       for (const w of c.warn) warn.push(`${layerName(L)}: ${w}`);
       let z = 0; const dep = Math.max(.01, c.depth), stp = Math.max(.01, c.step); while (z > -dep + 1e-6) { z = Math.max(z - stp, -dep); levels.push(z) }
       if (dep > sheet.thick + .5 && c.op !== 'relief') warn.push(T(`Слой «${layerName(L)}»: глубина ${dep} мм больше толщины заготовки ${sheet.thick} мм.`, `Layer “${layerName(L)}”: depth ${dep} mm exceeds stock ${sheet.thick} mm.`));
       let cz = safe; const G0 = (x, y, zz) => { add({ g: 0, x, y, z: zz }); if (zz != null) cz = zz }, G1 = (x, y, zz, f) => { add({ g: 1, x, y, z: zz, f }); if (zz != null) cz = zz };
+      const Z = Object.assign({}, CNC_Z_DEF, Z_PRESETS[c.zMode] || {}, c.zMode === 'custom' ? c : {}), clearH = Math.max(.3, Z.clearH);
       const retract = () => G0(null, null, safe), vec = ls.filter(s => s.kind !== 'image' && s.kind !== 'relief');
+      const hop = () => G0(null, null, Z.retract === 'low' ? Math.min(safe, clearH) : safe); // between paths of one layer
+      let sinceLift = 0;
+      /* chip clearing: lift out of the cut every N mm, come back down at plunge speed */
+      const liftNow = (zz, x, y) => { G0(null, null, clearH); G0(null, null, Math.min(clearH, zz + .3)); G1(null, null, zz, c.plunge); sinceLift = 0 };
+      /* entry into the cut: straight plunge, or a ramp along the path itself (closed paths can spiral down) */
+      const enter = (p, zz, closed) => {
+        const from = Math.min(cz, .5); if (cz > .5) G0(null, null, .5);
+        if (Z.entry === 'plunge' || from <= zz + 1e-6) { G1(null, null, zz, c.plunge); return }
+        const ang = clamp(Z.rampAng || 5, 1, 45) * Math.PI / 180, need = (from - zz) / Math.tan(ang);
+        const pts = closed ? p.concat([p[0]]) : p; let cur = pts[0], zc = from, done = 0, i = 1, dir = 1, guard = 0;
+        if (pts.length < 2) { G1(null, null, zz, c.plunge); return }
+        while (done < need - 1e-6 && guard++ < 20000) {
+          const nx = pts[i], seg = Math.hypot(nx[0] - cur[0], nx[1] - cur[1]); if (seg < 1e-9) { i += dir; if (closed && i >= pts.length) i = 1; continue }
+          const take = Math.min(seg, need - done), k = take / seg, px = cur[0] + (nx[0] - cur[0]) * k, py = cur[1] + (nx[1] - cur[1]) * k;
+          done += take; zc = from - (from - zz) * done / need; G1(px, py, zc, c.plunge); cur = [px, py];
+          if (take >= seg - 1e-9) { if (closed) { i++; if (i >= pts.length) i = 1 } else { i += dir; if (i >= pts.length || i < 0) { dir = -dir; i += 2 * dir } } }
+        }
+        // back to the start point at full depth so the loop is cut completely
+        if (closed) { let j = i; for (let g = 0; g < pts.length && Math.hypot(cur[0] - pts[0][0], cur[1] - pts[0][1]) > 1e-6; g++) { const q = pts[j]; G1(q[0], q[1], zz, c.feed); cur = q; j++; if (j >= pts.length) break } }
+        else { G1(pts[0][0], pts[0][1], zz, c.feed) }
+      };
       if (ls.some(s => s.kind === 'image')) warn.push(T('Фото пропущены: для фрезера используйте трассировку, многослойную картину или 3D-рельеф.', 'Photos skipped: for a router use tracing, a layered picture or a 3D relief.'));
       const cutLoop = (p, zz, closed, tabZ, feed) => {
         const pts = closed ? p.concat([p[0]]) : p;
-        if (tabZ == null) { for (let i = 1; i < pts.length; i++)G1(pts[i][0], pts[i][1], zz, feed); return }
+        if (tabZ == null) { for (let i = 1; i < pts.length; i++) { G1(pts[i][0], pts[i][1], zz, feed); if (Z.lift === 'dist') { sinceLift += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (sinceLift > Math.max(5, Z.liftEvery) && i < pts.length - 1) liftNow(zz) } } return }
         let curZ = zz; walkTabs(pts, c.tabs, c.tabW + tool.d, (x, y, tb) => { const want = tb ? Math.max(zz, tabZ) : zz; if (want !== curZ) { G1(null, null, want, c.plunge); curZ = want } G1(x, y, want, feed) }); if (curZ !== zz) G1(null, null, zz, c.plunge)
       };
       const op = c.op;
@@ -144,9 +183,9 @@ function planJob(plate) {
             for (const ring of rings) for (const p of ring) {
               // inside the already-cleared pocket move at feed (never rapid below the surface)
               if (first || clear >= 0) { G0(null, null, Math.max(clear, .5)); G0(p[0][0], p[0][1]) } else { G1(null, null, clear, c.plunge); G1(p[0][0], p[0][1], clear, c.feed) }
-              first = false; G1(null, null, zz, c.plunge); cutLoop(p, zz, true, null, c.feed)
+              if (first) enter(p, zz, true); else G1(null, null, zz, c.plunge); first = false; cutLoop(p, zz, true, null, c.feed)
             }
-            prev = zz
+            prev = zz; if (Z.lift === 'pass') { G0(null, null, clearH); G0(null, null, zz + .3) }
           }
           if (fin > 0) for (const p of offsetPaths(s.paths, -r)) { retract(); G0(p[0][0], p[0][1]); G1(null, null, levels[levels.length - 1], c.plunge); cutLoop(p, levels[levels.length - 1], true, null, Math.round(c.feed * .8)) }
           retract()
@@ -174,17 +213,23 @@ function planJob(plate) {
         }
         const tabZ = -(dep - Math.min(c.tabH, dep));
         for (const o of orderPaths(items, [cx, cy], S.job.innerFirst)) {
-          retract(); G0(o.p[0][0], o.p[0][1]);
-          for (const zz of levels) { if (!o.closed && zz !== levels[0]) { retract(); G0(o.p[0][0], o.p[0][1]) } G1(null, null, zz, c.plunge); cutLoop(o.p, zz, o.closed, (o.tabs && c.tabs > 0 && zz < tabZ - 1e-6) ? tabZ : null, c.feed) }
-          if (o.fin) for (const p of o.fin) { retract(); G0(p[0][0], p[0][1]); const zz = levels[levels.length - 1]; G1(null, null, zz, c.plunge); cutLoop(p, zz, true, c.tabs > 0 ? tabZ : null, Math.round(c.feed * .8)) }
-          retract()
+          hop(); G0(o.p[0][0], o.p[0][1]);
+          for (const zz of levels) {
+            if (!o.closed && zz !== levels[0]) { G0(null, null, Math.min(safe, clearH)); G0(o.p[0][0], o.p[0][1]) }
+            enter(o.p, zz, o.closed); const tz = (o.tabs && c.tabs > 0 && zz < tabZ - 1e-6) ? tabZ : null; cutLoop(o.p, zz, o.closed, tz, c.feed);
+            if (Z.lift === 'pass' && zz !== levels[levels.length - 1]) { G0(null, null, clearH); G0(null, null, zz + .3) }
+          }
+          if (Z.spring && levels.length) { const zz = levels[levels.length - 1]; if (!o.closed) { G0(null, null, clearH); G0(o.p[0][0], o.p[0][1]); G1(null, null, zz, c.plunge) } cutLoop(o.p, zz, o.closed, (o.tabs && c.tabs > 0) ? tabZ : null, c.feed) }
+          if (o.fin) for (const p of o.fin) { hop(); G0(p[0][0], p[0][1]); const zz = levels[levels.length - 1]; enter(p, zz, true); cutLoop(p, zz, true, c.tabs > 0 ? tabZ : null, Math.round(c.feed * .8)) }
+          hop()
         }
+        retract()
       }
-      ops.push({ layer: L.id, name: layerName(L), type: c.op, color: L.color, params: c, tool, rpm: c.rpm, moves: mv });
+      ops.push({ head: 'cnc', layer: L.id, name: layerName(L), type: c.op, color: L.color, params: c, tool, rpm: c.rpm, coolant: Z.coolant, spinWait: Z.spinWait, moves: mv });
     }
   }
   const parked = S.shapes.filter(s => s.parked).length; if (parked) warn.push(T(`Неразмещённые объекты (${parked}) в задание не входят.`, `${parked} unplaced objects are not part of the job.`));
-  return { plate, machine: m, sheet, ops, warn };
+  return { plate, machine: m, sheet, ops, warn, combo: !!m.combo };
 }
 /* Warn when a tool is too big for narrow features of a pocket / inside profile. */
 function checkToolFit(s, r, L, warn) {
@@ -201,7 +246,8 @@ function planRaster(s, l, Pmax, F, add, warn) {
   const data = typeof processImage === 'function' ? processImage(s, pw, ph) : null;
   if (!data) { warn.push(T('Фото ещё загружается — нажмите «Рассчитать» ещё раз.', 'The photo is still loading — press Generate again.')); return }
   const px = wmm / pw, ry = hmm / ph, gray = s.img.mode === 'gray', minP = Math.min(Pmax, clamp(l.minPower || 0, 0, 100) / 100), os = l.overscan || 0;
-  const pv = v => gray ? (v < 4 ? 0 : fx(minP + (Pmax - minP) * v / 255, 4)) : (v > 127 ? Pmax : 0);
+  const LUT = new Float64Array(256); for (let v = 0; v < 256; v++) LUT[v] = gray ? (v < 4 ? 0 : fx(minP + (Pmax - minP) * v / 255, 4)) : (v > 127 ? Pmax : 0);
+  const pv = v => LUT[v]; // per-pixel power from a lookup table (was recomputed for every pixel)
   let dir = 1;
   if (!vert) {
     for (let r = 0; r < ph; r++) {
@@ -237,22 +283,27 @@ function estimateTime(job) {
 
 /* ============================ G-code preview ============================ */
 const P = { text: '', lines: [], moves: [], total: 0, t: 0, playing: false, rate: 20, mode: '2d', colorBy: 'layer', rapids: true, ghost: true, dirs: false, yaw: -.65, pitch: .95, sc: 1.2, panX: 0, panY: 0, laser: true, stats: null, file: null, follow: true, curLine: -1, layers: [], _acc: '#f0a43a', search: '', hits: [], rev: -1, plate: 0, post: null, report: null };
+const LW = new Uint8Array(256), LV = new Float64Array(256);
 function loadGcode(text, file, keepT) {
   P.text = text; P.file = file; P.lines = text.split(/\r?\n/); P.laser = file ? !/\bZ\s*-\s*\.?\d/i.test(text) : S.machine.type === 'laser';
+  // combined laser + router programs switch heads; the first post comment tells which one starts
+  const mixed = /=====\s*(СМЕНА ГОЛОВКИ|HEAD CHANGE)/.test(text); let lz = P.laser; if (mixed) { const pc = /;\s*(machine:.*?\|\s*)?post:([^\n]*)/.exec(text); lz = !!(pc && /лазер|laser/i.test(pc[2])); P.laser = false }
   const mv = [], layers = []; let x = 0, y = 0, z = P.laser ? 0 : S.machine.safeZ, f = 1000, s = 0, abs = true, inch = false, on = false, col = null, mode = 0, t = 0, cut = 0, rap = 0;
-  const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], rapid = S.machine.rapid || 3000; let minF = Infinity, maxF = 0;
+  const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], rapid = S.machine.rapid || 3000; let minF = Infinity, maxF = 0; let lastB = null;
   const push = (nx, ny, nz, i) => {
     const d = Math.hypot(nx - x, ny - y, nz - z); if (d < 1e-9) { x = nx; y = ny; z = nz; return } const r = mode === 0, feed = r ? rapid : Math.max(1, f);
-    const c = !r && (P.laser ? (on && s > 0) : (Math.min(z, nz) < -1e-4)); const dt = d / feed * 60;
-    mv.push({ a: [x, y, z], b: [nx, ny, nz], r, c, f: feed, s, l: i, col, t0: t, t1: t + dt }); t += dt; if (c) { cut += d; minF = Math.min(minF, feed); maxF = Math.max(maxF, feed); for (const q of [[x, y, z], [nx, ny, nz]]) { for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], q[k]); b[k + 3] = Math.max(b[k + 3], q[k]) } } } else rap += d; x = nx; y = ny; z = nz
+    const c = !r && (lz ? (on && s > 0) : (Math.min(z, nz) < -1e-4)); const dt = d / feed * 60;
+    const B = [nx, ny, nz], A = lastB && lastB[0] === x && lastB[1] === y && lastB[2] === z ? lastB : [x, y, z]; lastB = B; // consecutive moves share their joint point (fewer allocations)
+    mv.push({ a: A, b: B, r, c, f: feed, s, l: i, col, t0: t, t1: t + dt }); t += dt; if (c) { cut += d; if (feed < minF) minF = feed; if (feed > maxF) maxF = feed; if (x < b[0]) b[0] = x; if (nx < b[0]) b[0] = nx; if (y < b[1]) b[1] = y; if (ny < b[1]) b[1] = ny; if (z < b[2]) b[2] = z; if (nz < b[2]) b[2] = nz; if (x > b[3]) b[3] = x; if (nx > b[3]) b[3] = nx; if (y > b[4]) b[4] = y; if (ny > b[4]) b[4] = ny; if (z > b[5]) b[5] = z; if (nz > b[5]) b[5] = nz } else rap += d; x = nx; y = ny; z = nz
   };
   for (let i = 0; i < P.lines.length; i++) {
     const raw = P.lines[i];
     const lm = /^\s*[;(]\s*LAYER\s+(\S+)\s+(#[0-9a-fA-F]{6})/.exec(raw); if (lm) { col = lm[2]; layers.push({ name: lm[1].replace(/_/g, ' ').replace(/\)$/, ''), color: col }); continue }
-    const ln = raw.replace(/\(.*?\)/g, '').replace(/;.*/, '').replace(/^N\d+\s*/i, '').toUpperCase(); if (!ln.trim()) continue;
+    if (mixed && /=====/.test(raw)) { lz = /ЛАЗЕР|LASER/.test(raw); continue }
+    const nt = gcScan(raw, LW, LV); if (nt <= 0) continue;
     let nx = null, ny = null, nz = null, I = 0, J = 0, Rr = null;
-    for (const mm of ln.matchAll(/([A-Z])\s*([-+]?\d*\.?\d+)/g)) {
-      const w = mm[1], v = parseFloat(mm[2]);
+    for (let q = 0; q < nt; q++) {
+      const w = String.fromCharCode(LW[q]), v = LV[q];
       if (w === 'G') { if (v === 0 || v === 1 || v === 2 || v === 3) mode = v; else if (v === 90) abs = true; else if (v === 91) abs = false; else if (v === 20) inch = true; else if (v === 21) inch = false }
       else if (w === 'M') { if (v === 3 || v === 4) on = true; else if (v === 5) on = false }
       else if (w === 'X') nx = v; else if (w === 'Y') ny = v; else if (w === 'Z') nz = v; else if (w === 'F') f = v * (inch ? 25.4 : 1); else if (w === 'S') s = v; else if (w === 'I') I = v; else if (w === 'J') J = v; else if (w === 'R') Rr = v
